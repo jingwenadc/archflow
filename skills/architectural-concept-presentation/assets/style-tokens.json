@@ -1,0 +1,31 @@
+{
+  "canvasModes": {
+    "a3Report": {"width": 1414, "height": 1000, "ratio": 1.414, "label": "A3 方案文本"},
+    "screen169": {"width": 1600, "height": 900, "ratio": 1.777778, "label": "16:9 汇报演示"}
+  },
+  "colors": {
+    "ink": "#151719",
+    "white": "#FFFFFF",
+    "paper": "#F5F4EF",
+    "lineGray": "#D7D9D8",
+    "muted": "#73787C",
+    "deepSlate": "#355B62",
+    "energyGreen": "#9CCB3B",
+    "civicRed": "#D82B23",
+    "brass": "#C79A34",
+    "campusBrick": "#A84D43",
+    "landscapeGreen": "#78A86D",
+    "analysisBlue": "#68A6CF"
+  },
+  "fonts": {
+    "cjkPreferred": ["Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC"],
+    "latinPreferred": ["Arial", "Aptos", "Helvetica"],
+    "displayNumeralOptional": ["Bodoni MT Black"]
+  },
+  "typePt": {
+    "a3Report": {"cover": 34, "chapter": 54, "title": 16, "eyebrow": 8, "body": 10, "annotation": 7, "footer": 6},
+    "screen169": {"cover": 44, "chapter": 60, "title": 28, "eyebrow": 12, "body": 18, "annotation": 12, "footer": 9}
+  },
+  "grid": {"columns": 12, "gutterUnits": 1, "baselineUnits": 4},
+  "density": ["停顿", "解释", "审阅"]
+}

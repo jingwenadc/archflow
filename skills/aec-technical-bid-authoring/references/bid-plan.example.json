@@ -1,0 +1,82 @@
+{
+  "project": {
+    "name": "示例建筑修缮技术标",
+    "document_status": "review"
+  },
+  "stated_total_points": 100,
+  "hard_constraints": [
+    {
+      "id": "H-01",
+      "requirement": "技术响应文件不得超过规定页数",
+      "source": "S01 PDF p.10",
+      "status": "verified"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-01",
+      "description": "采购需求和现场条件",
+      "source": "S01 PDF p.20-24",
+      "status": "verified"
+    },
+    {
+      "id": "E-02",
+      "description": "类似业绩合同及竣工验收证明",
+      "source": "S02 PDF p.1-12",
+      "status": "verified"
+    },
+    {
+      "id": "E-03",
+      "description": "经授权的最终响应报价记录",
+      "source": "投标负责人确认记录 D-01",
+      "status": "verified"
+    }
+  ],
+  "criteria": [
+    {
+      "id": "P-01",
+      "group": "价格",
+      "factor": "响应报价",
+      "points": 30,
+      "objective": true,
+      "scoring_rule": "按招标文件公式计算",
+      "source": "S01 PDF p.12",
+      "response_sections": ["报价文件"],
+      "evidence_ids": ["E-03"],
+      "gap": ""
+    },
+    {
+      "id": "O-01",
+      "group": "客观",
+      "factor": "类似项目业绩",
+      "points": 30,
+      "objective": true,
+      "scoring_rule": "满足定义的业绩按档计分",
+      "source": "S01 PDF p.13",
+      "response_sections": ["附件A 类似业绩"],
+      "evidence_ids": ["E-02"],
+      "gap": ""
+    },
+    {
+      "id": "T-01",
+      "group": "技术主观",
+      "factor": "技术方案与实施措施",
+      "points": 40,
+      "objective": false,
+      "scoring_rule": "科学、可行、针对性强得满分",
+      "source": "S01 PDF p.14",
+      "response_sections": ["2 技术方案与实施措施"],
+      "evidence_ids": ["E-01"],
+      "gap": ""
+    }
+  ],
+  "claims": [
+    {
+      "id": "C-01",
+      "text": "项目拟采用样板先行和检查点验收",
+      "status": "proposal",
+      "source": "技术策划会议确认",
+      "authorized": true
+    }
+  ]
+}

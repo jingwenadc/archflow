@@ -1,0 +1,35 @@
+{
+  "project": "示例项目",
+  "structure": {
+    "approved": true,
+    "approvedAt": "2026-09-13T10:00:00+08:00",
+    "approvalNote": "用户明确批准整体骨架"
+  },
+  "storyboard": {
+    "approved": true,
+    "approvedAt": "2026-09-13T11:00:00+08:00",
+    "approvalNote": "用户明确批准完整逐页故事板"
+  },
+  "sections": [
+    {
+      "id": "01",
+      "title": "项目解读",
+      "authorized": true,
+      "generated": false,
+      "approved": false,
+      "revisionAuthorized": false,
+      "selectedVersion": null,
+      "outputPath": "03_章节设计/01_项目解读"
+    },
+    {
+      "id": "02",
+      "title": "设计构思",
+      "authorized": true,
+      "generated": false,
+      "approved": false,
+      "revisionAuthorized": false,
+      "selectedVersion": null,
+      "outputPath": "03_章节设计/02_设计构思"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+interface:
+  display_name: "建筑概念方案 PPT"
+  short_description: "将任务书、图纸和效果图组织成可汇报、可审查的高品质建筑方案演示"
+  brand_color: "#355B62"
+  default_prompt: "使用 $architectural-concept-presentation 分阶段整理我的建筑方案；先提交整体骨架等待批准，不要直接生成幻灯片。"
+policy:
+  allow_implicit_invocation: true

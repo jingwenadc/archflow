@@ -1,0 +1,94 @@
+{
+  "项目": "示例：城市公共文化中心",
+  "画布": "screen169",
+  "slides": [
+    {
+      "id": "S01",
+      "chapter": "开篇",
+      "title": "城市公共文化中心",
+      "purpose": "建立项目身份",
+      "takeaway": "本次汇报聚焦概念方案与关键空间",
+      "archetype": "minimal-cover",
+      "density": "pause",
+      "evidence": ["任务书中的项目名称"],
+      "assets": ["logo-client", "render-hero-01"]
+    },
+    {
+      "id": "S02",
+      "chapter": "项目解读",
+      "title": "区位与公共交通",
+      "purpose": "说明项目与城市公共网络的关系",
+      "takeaway": "场地连接两条主要公共路径",
+      "archetype": "context-map-split",
+      "density": "explain",
+      "evidence": ["场地区位图", "任务书中的出入口条件"],
+      "assets": ["map-city-01", "map-site-01"]
+    },
+    {
+      "id": "S03",
+      "chapter": "项目解读",
+      "title": "开放与安静的冲突",
+      "purpose": "明确公共性与专业空间的核心矛盾",
+      "takeaway": "不同开放等级需要清晰分层",
+      "archetype": "narrative-hinge",
+      "density": "pause",
+      "evidence": ["任务书的开放时间与声学要求"],
+      "assets": []
+    },
+    {
+      "id": "S04",
+      "chapter": "设计构思",
+      "title": "功能分层",
+      "purpose": "回应开放等级冲突",
+      "takeaway": "首层公共共享，上层形成可控专业空间",
+      "archetype": "stacked-axon-program",
+      "density": "explain",
+      "evidence": ["功能表", "概念平面"],
+      "assets": ["axon-program-01"]
+    },
+    {
+      "id": "S05",
+      "chapter": "设计构思",
+      "title": "体量生成",
+      "purpose": "解释形体如何回应场地与入口",
+      "takeaway": "公共轴线切分体量并形成共享中庭",
+      "archetype": "generation-sequence",
+      "density": "explain",
+      "evidence": ["体量模型四阶段"],
+      "assets": ["massing-01", "massing-02", "massing-03", "massing-04"]
+    },
+    {
+      "id": "S06",
+      "chapter": "方案呈现",
+      "title": "首层平面",
+      "purpose": "证明公共路径与主要功能组织",
+      "takeaway": "入口、中庭与展厅形成连续公共界面",
+      "archetype": "plan-section-plate",
+      "density": "inspect",
+      "evidence": ["首层概念平面"],
+      "assets": ["plan-l1"]
+    },
+    {
+      "id": "S07",
+      "chapter": "方案呈现",
+      "title": "中庭体验",
+      "purpose": "说明核心空间的尺度与光线意图",
+      "takeaway": "顶部采光加强中庭的公共识别度",
+      "archetype": "plan-plus-rendering",
+      "density": "inspect",
+      "evidence": ["首层概念平面", "中庭效果图"],
+      "assets": ["plan-l1", "render-atrium-01"]
+    },
+    {
+      "id": "S08",
+      "chapter": "结束",
+      "title": "下一步工作",
+      "purpose": "明确需要甲方确认的事项",
+      "takeaway": "确认功能分层后进入深化设计",
+      "archetype": "closing",
+      "density": "pause",
+      "evidence": ["当前会议议题"],
+      "assets": []
+    }
+  ]
+}

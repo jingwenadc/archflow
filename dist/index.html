@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="面向建筑设计团队的 AI 方案、投标与施工图协同工作台" />
+    <title>图策 ArchPilot｜建筑设计智能工作台</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand" aria-label="图策 ArchPilot">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" role="img">
+              <path class="mark-a" d="M6.5 24 13.7 7.5h3.2L22.4 20" />
+              <path class="mark-bar" d="M10.1 17.2h9.2" />
+              <path class="mark-p" d="M21 24V9h3.2a4.1 4.1 0 0 1 0 8.2H21" />
+            </svg>
+          </span>
+          <span class="brand-name"><strong>图策</strong><small>ARCHPILOT</small></span>
+        </div>
+        <button class="project-switcher" type="button">
+          <span>冷链产业园概念方案</span>
+          <span class="chevron">⌄</span>
+        </button>
+        <nav class="main-tabs" aria-label="业务模块">
+          <button class="tab is-active" data-tab="concept" type="button">方案与 PPT</button>
+          <button class="tab" data-tab="bid" type="button">投标文件</button>
+          <button class="tab" data-tab="drawing" type="button">施工图协同</button>
+        </nav>
+        <div class="top-actions">
+          <button class="quiet-button" id="skillsButton" type="button">案例与技能库</button>
+          <button class="icon-button" id="outputsButton" type="button" aria-label="查看成果">↧</button>
+          <span class="avatar" aria-label="当前用户">J</span>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="file-panel" id="filePanel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">PROJECT FILES</p>
+              <h2>项目资料</h2>
+            </div>
+            <button class="icon-button compact" id="collapseFiles" type="button" aria-label="收起资料栏">‹</button>
+          </div>
+          <label class="drop-zone" id="dropZone" for="fileInput">
+            <input id="fileInput" type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.dwg,.dxf,.skp" />
+            <span class="upload-icon" aria-hidden="true">＋</span>
+            <strong>上传项目资料</strong>
+            <small>拖放图片、文档、CAD 或 SU 文件</small>
+          </label>
+          <div class="file-list" id="fileList">
+            <button class="file-item is-selected" type="button">
+              <span class="file-type pdf">PDF</span>
+              <span class="file-copy"><strong>设计任务书.pdf</strong><small>2.8 MB · 已解析</small></span>
+            </button>
+            <button class="file-item" type="button">
+              <span class="file-type cad">DWG</span>
+              <span class="file-copy"><strong>总平面底图.dwg</strong><small>8.4 MB · 已上传</small></span>
+            </button>
+            <button class="file-item" type="button">
+              <span class="file-thumb sample-thumb" aria-hidden="true"></span>
+              <span class="file-copy"><strong>场地航拍图.jpg</strong><small>4.1 MB · 已识别</small></span>
+            </button>
+          </div>
+        </aside>
+
+        <section class="canvas-panel" aria-live="polite">
+          <div class="canvas-toolbar">
+            <div>
+              <p class="eyebrow" id="stageEyebrow">CONCEPT · 01</p>
+              <h1 id="workspaceTitle">冷链产业园概念方案</h1>
+            </div>
+            <div class="toolbar-actions">
+              <button class="quiet-button" id="versionButton" type="button">V1.0⌄</button>
+              <button class="primary-button" id="generateButton" type="button">生成 PPT 草案</button>
+            </div>
+          </div>
+
+          <div class="stage" id="stage">
+            <article class="deck-page">
+              <div class="deck-meta">
+                <span>CONCEPT DESIGN</span>
+                <span>2026.09</span>
+              </div>
+              <div class="deck-copy">
+                <p>智慧冷链 · 高效物流 · 低碳园区</p>
+                <h2>冷链产业园<br />概念设计</h2>
+                <div class="deck-rule"></div>
+                <span>项目分析 / 对标案例 / 设计构思 / 效果成果</span>
+              </div>
+              <div class="massing-graphic" aria-label="抽象建筑体块图形">
+                <span class="mass mass-a"></span>
+                <span class="mass mass-b"></span>
+                <span class="mass mass-c"></span>
+                <span class="grid-lines"></span>
+              </div>
+              <div class="deck-index">01</div>
+            </article>
+          </div>
+
+          <div class="page-strip" aria-label="PPT 页面">
+            <button class="page-thumb is-active" type="button"><span>01</span><strong>封面</strong></button>
+            <button class="page-thumb" type="button"><span>02</span><strong>项目解读</strong></button>
+            <button class="page-thumb" type="button"><span>03</span><strong>场地分析</strong></button>
+            <button class="page-thumb" type="button"><span>04</span><strong>设计构思</strong></button>
+            <button class="add-page" type="button" aria-label="添加页面">＋</button>
+          </div>
+        </section>
+
+        <aside class="ai-panel" id="aiPanel">
+          <div class="panel-heading ai-heading">
+            <div>
+              <p class="eyebrow">AI COPILOT</p>
+              <h2>设计助手</h2>
+            </div>
+            <span class="status-pill"><i></i> 已就绪</span>
+          </div>
+          <div class="chat" id="chat">
+            <div class="message assistant">
+              <span class="message-avatar">AI</span>
+              <div>
+                <p>我已读取设计任务书，并识别出 12 项关键条件。建议先完善物流流线与分期建设策略。</p>
+                <button class="inline-action" type="button">查看项目条件 →</button>
+              </div>
+            </div>
+            <div class="suggestions">
+              <button type="button">生成 PPT 章节结构</button>
+              <button type="button">分析总平面底图</button>
+              <button type="button">应用冷链园区技能</button>
+            </div>
+          </div>
+          <div class="composer-wrap">
+            <div class="context-chip" id="contextChip"><span>⌁</span> 已引用：设计任务书.pdf <button type="button" aria-label="移除引用">×</button></div>
+            <form class="composer" id="chatForm">
+              <button class="attach-button" id="attachButton" type="button" aria-label="添加文件">＋</button>
+              <textarea id="chatInput" rows="2" placeholder="询问项目，或描述要生成的内容…"></textarea>
+              <button class="send-button" type="submit" aria-label="发送">↑</button>
+            </form>
+            <p class="ai-note">AI 结果需由设计师或专业工程师复核</p>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>

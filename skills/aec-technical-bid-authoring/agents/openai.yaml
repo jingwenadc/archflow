@@ -1,0 +1,7 @@
+interface:
+  display_name: "建筑技术标编制"
+  short_description: "按评分标准与证据链编制可审查的建筑设计或施工技术响应文件"
+  brand_color: "#7A1F24"
+  default_prompt: "使用 $aec-technical-bid-authoring 分析招标文件并编制技术响应；先输出评分映射与资料缺口，再开始正文。"
+policy:
+  allow_implicit_invocation: true
