@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "archflow-api"
+version = "0.1.0"
+description = "ArchFlow review API"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.135,<1",
+  "httpx>=0.28,<1",
+  "python-multipart>=0.0.20,<1",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4,<10",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/archflow_api"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
