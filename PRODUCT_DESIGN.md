@@ -80,7 +80,7 @@ Logo 图形建议由 5–6 个独立几何模块围绕中心组合，形成建�
 2. 投标文件
 3. 施工图协同
 
-案例与技能库作为辅助入口，不作为第四个主要业务模块。
+案例与技能库作为辅助入口，不作为第四个主要业务模块。第一版需要提供独立的“案例 / 技能库”页面，展示已有技能的用途、输入、输出、审批步骤与代码库位置；在 AI 工作流接入前，“调用技能”按钮保持禁用。
 
 ## 5. 第一版范围
 
@@ -326,7 +326,7 @@ ArchFlow 第一阶段建议采用“模块化单体 + 独立异步 Worker”的�
   └─ FastAPI API
        ├─ PostgreSQL：业务数据、权限、版本与任务索引
        ├─ S3 兼容对象存储：上传文件、预览图、PPTX、DOCX、PDF、CAD
-       ├─ Temporal：长任务编排、重试、暂停、恢复与取消
+       ├─ Workflow Engine（TBD）：长任务编排、重试、暂停、恢复与取消
        └─ Worker Pools
             ├─ ingest：文件解析、OCR、切片与索引
             ├─ text-ai：对话、提纲、章节与检查
@@ -350,7 +350,7 @@ ArchFlow 第一阶段建议采用“模块化单体 + 独立异步 Worker”的�
 | 主数据库 | PostgreSQL | 项目、权限、聊天、版本、任务和审计的唯一事务数据源 |
 | 语义检索 | PostgreSQL 全文检索 + pgvector | 初期无需单独维护向量数据库；查询必须带组织/项目过滤 |
 | 文件存储 | S3 兼容对象存储 + CDN | 大文件不进入 PostgreSQL；支持分片上传、签名 URL、生命周期管理 |
-| 工作流 | Temporal Cloud | 负责长任务、重试、超时、人工确认、恢复和不同 Worker 路由；先用托管服务，只有合规或成本明确要求时才自建 |
+| 工作流 | TBD：DBOS / Hatchet / Temporal | 第一版先定义任务与 Worker 边界，不绑定工作流引擎；在真实任务和成本数据出现后决定 |
 | 实时更新 | SSE | 用于聊天文本、任务进度和日志；只有未来多人实时编辑才引入 WebSocket/CRDT |
 | 可观测性 | OpenTelemetry | 将一次请求、一个工作流、模型调用和导出任务串成同一条 trace |
 | 本地开发 | Docker Compose + pnpm + uv | 一条命令启动依赖；前后端各用一个明确的锁文件 |
@@ -390,7 +390,7 @@ archflow/
 │  └─ web/                  # Next.js 应用
 ├─ services/
 │  ├─ api/                  # FastAPI：HTTP、SSE、认证与事务
-│  └─ worker/               # Temporal workflows 与 activities
+│  └─ worker/               # 工作流与后台任务；具体引擎 TBD
 ├─ packages/
 │  ├─ ui/                   # ArchFlow 设计系统与通用组件
 │  └─ api-client/           # 由 OpenAPI 自动生成的 TypeScript client
@@ -427,7 +427,7 @@ usage/
 HTTP / Worker entrypoints → application services → domain rules → persistence/adapters
 ```
 
-领域规则不能依赖 FastAPI、Temporal 或具体模型供应商；模型、存储和渲染器通过窄接口接入。
+领域规则不能依赖 FastAPI、具体工作流引擎或模型供应商；模型、存储和渲染器通过窄接口接入。
 
 ## 17. 数据库结构
 
@@ -488,7 +488,7 @@ HTTP / Worker entrypoints → application services → domain rules → persiste
 | 表 | 关键字段 | 说明 |
 | --- | --- | --- |
 | `jobs` | `project_id`, `workflow_id`, `type`, `status`, `progress`, `requested_by` | 面向产品 UI 的任务状态镜像 |
-| `job_steps` | `job_id`, `step_key`, `status`, `attempt`, `cost_json` | 便于 UI 显示和成本分析，不代替 Temporal history |
+| `job_steps` | `job_id`, `step_key`, `status`, `attempt`, `cost_json` | 便于 UI 显示和成本分析，不代替工作流引擎内部历史 |
 | `skills` | `organization_id`, `name`, `scope`, `current_version_id` | 可复用的专业方法 |
 | `skill_versions` | `skill_id`, `version_no`, `definition_json`, `evaluation_status` | Prompt、规则、工具配置和测试版本 |
 | `usage_ledger` | `organization_id`, `project_id`, `job_id`, `provider`, `units`, `cost` | 模型、渲染和计算成本 |
@@ -583,7 +583,7 @@ POST /v1/jobs/{job_id}/cancel
 
 全局限流之外还要有每组织的并发额度，防止一个大型任务占用全部资源。UI 应显示“排队中、执行中、等待确认、可重试、已取消”等真实状态。
 
-Redis 不作为第一版必选依赖。Temporal 已承担持久任务队列，PostgreSQL 承担真值数据；只有出现跨实例速率限制、热点缓存或短期 presence 等明确需求时再加入 Redis。
+Redis 不作为第一版必选依赖。业务真值保存在 PostgreSQL；工作流引擎与队列方案仍为 TBD。只有出现跨实例速率限制、热点缓存或短期 presence 等明确需求时再加入 Redis。
 
 ## 20. 大型 PPT 与投标文件
 
@@ -682,7 +682,7 @@ Redis 不作为第一版必选依赖。Temporal 已承担持久任务队列，Po
 - 2 个 FastAPI 实例，避免单点并支持滚动发布。
 - 托管 PostgreSQL，启用自动备份和时间点恢复。
 - S3 兼容对象存储和 CDN。
-- 托管 Temporal。
+- 工作流引擎暂不部署；先完成任务 API、状态模型和禁用态 UI。接入时优先评估零固定费用的 DBOS 或 Hatchet，再根据可靠性与运维需求评估 Temporal。
 - ingest、text-ai、render 各 1 个 Worker deployment，按资源设并发。
 - 不需要 Kubernetes；选择支持容器、健康检查和自动扩缩的托管平台。
 
@@ -731,7 +731,7 @@ Redis 不作为第一版必选依赖。Temporal 已承担持久任务队列，Po
 
 - 领域纯函数单元测试：规则、版本、权限、成本和状态转换。
 - API/数据库集成测试：真实 PostgreSQL 和对象存储兼容服务。
-- Temporal workflow replay 与故障注入测试：超时、重试、取消和 worker 重启。
+- 工作流 replay/恢复与故障注入测试：超时、重试、取消和 worker 重启。
 - 生成质量 evaluation：项目条件提取、响应矩阵覆盖率、引用正确性。
 - Golden files：固定输入生成 PPTX/DOCX/PDF 后检查结构、字体、分页和视觉截图。
 - E2E 只覆盖关键旅程：上传 → 对话 → 生成 → 修改 → 下载。
@@ -804,8 +804,9 @@ artifact_version_id
 - Next.js 官方文档：https://nextjs.org/docs
 - FastAPI Background Tasks：https://fastapi.tiangolo.com/tutorial/background-tasks/
 - FastAPI Server-Sent Events：https://fastapi.tiangolo.com/tutorial/server-sent-events/
+- DBOS Python：https://github.com/dbos-inc/dbos-transact-py
+- Hatchet：https://docs.hatchet.run/v1
 - Temporal Workflows：https://docs.temporal.io/workflows
-- Temporal Task Queues：https://docs.temporal.io/task-queue
 - PostgreSQL JSON Types：https://www.postgresql.org/docs/current/datatype-json.html
 - PostgreSQL Row Security：https://www.postgresql.org/docs/current/ddl-rowsecurity.html
 - PostgreSQL Partitioning：https://www.postgresql.org/docs/current/ddl-partitioning.html

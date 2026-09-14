@@ -1,0 +1,69 @@
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import HTTPException, UploadFile, status
+
+from .models import FileRecord
+
+
+ALLOWED_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+}
+
+
+class LocalFileStorage:
+    """Review-only storage adapter. Replace with S3 without changing API routes."""
+
+    def __init__(self, root: Path, max_bytes: int) -> None:
+        self.root = root
+        self.max_bytes = max_bytes
+
+    async def save(self, upload: UploadFile) -> FileRecord:
+        original_name = Path(upload.filename or "unnamed").name
+        extension = Path(original_name).suffix.lower()
+        if extension not in ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail="Unsupported file type. CAD, DXF, SketchUp and PKPM files are not enabled in v1.",
+            )
+
+        file_id = str(uuid4())
+        target_dir = self.root / file_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"original{extension}"
+        size = 0
+
+        try:
+            with target.open("xb") as output:
+                while chunk := await upload.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > self.max_bytes:
+                        raise HTTPException(
+                            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail="File exceeds the 50 MB review limit.",
+                        )
+                    output.write(chunk)
+        except Exception:
+            target.unlink(missing_ok=True)
+            target_dir.rmdir()
+            raise
+        finally:
+            await upload.close()
+
+        return FileRecord(
+            id=file_id,
+            name=original_name,
+            size=size,
+            content_type=upload.content_type or "application/octet-stream",
+            status="uploaded",
+        )
