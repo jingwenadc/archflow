@@ -49,3 +49,19 @@ export function LibraryIcon(props: IconProps) {
 export function MoreIcon(props: IconProps) {
   return <Icon {...props}><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" /></Icon>;
 }
+
+export function EditIcon(props: IconProps) {
+  return <Icon {...props}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" /></Icon>;
+}
+
+export function BranchIcon(props: IconProps) {
+  return <Icon {...props}><circle cx="6" cy="5" r="2" /><circle cx="18" cy="6" r="2" /><circle cx="6" cy="19" r="2" /><path d="M6 7v10M8 7c4 0 3 7 8 7v-6" /></Icon>;
+}
+
+export function CheckIcon(props: IconProps) {
+  return <Icon {...props}><path d="m5 12 4 4L19 6" /></Icon>;
+}
+
+export function ImageIcon(props: IconProps) {
+  return <Icon {...props}><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="m21 15-5-5L5 21" /></Icon>;
+}

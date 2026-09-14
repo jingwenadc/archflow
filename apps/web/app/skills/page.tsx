@@ -1,29 +1,12 @@
 import Link from "next/link";
-import { BrandMark } from "@/components/brand";
-import { ChevronDown, LibraryIcon } from "@/components/icons";
-import { modules, skills } from "@/lib/workspace-data";
+import { AppHeader } from "@/components/app-header";
+import { LibraryIcon } from "@/components/icons";
+import { skills } from "@/lib/workspace-data";
 
 export default function SkillsPage() {
   return (
     <div className="app-shell skills-shell">
-      <header className="topbar">
-        <Link className="brand-link" href="/" aria-label="返回方案设计"><BrandMark /></Link>
-        <button className="project-switcher" type="button" aria-label="切换项目">
-          <span className="project-label">示例项目</span><strong>冷链产业园</strong><ChevronDown />
-        </button>
-        <nav className="module-nav" aria-label="主要业务模块">
-          {modules.map((item) => (
-            <Link key={item.key} href={item.href} className="module-link">
-              {item.label}{item.key === "drawing" && <span>规划中</span>}
-            </Link>
-          ))}
-        </nav>
-        <div className="top-actions">
-          <Link className="library-link is-active" href="/skills"><LibraryIcon />案例 / 技能库</Link>
-          <span className="review-badge">界面评审版</span>
-          <span className="avatar" aria-label="当前用户">J</span>
-        </div>
-      </header>
+      <AppHeader active="skills" />
 
       <main className="skills-page">
         <header className="skills-intro">
@@ -68,7 +51,7 @@ export default function SkillsPage() {
 
               <footer className="skill-card-footer">
                 <code>skills/{skill.slug}</code>
-                <button type="button" disabled>调用技能</button>
+                <Link className="skill-open-link" href={`/skills/${skill.slug}`}>查看并编辑</Link>
               </footer>
             </article>
           ))}
