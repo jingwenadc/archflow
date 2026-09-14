@@ -8,6 +8,8 @@ class Settings:
     upload_dir: Path
     allowed_origins: tuple[str, ...]
     max_upload_bytes: int = 50 * 1024 * 1024
+    project_dir: Path = Path(".local/projects")
+    case_upload_dir: Path = Path(".local/cases")
     repository_root: Path = Path(".")
     github_repository: str = "jingwenadc/archflow"
     github_base_branch: str = "main"
@@ -23,6 +25,8 @@ def load_settings() -> Settings:
     return Settings(
         upload_dir=Path(getenv("ARCHFLOW_UPLOAD_DIR", ".local/uploads")),
         allowed_origins=origins,
+        project_dir=Path(getenv("ARCHFLOW_PROJECT_DIR", ".local/projects")),
+        case_upload_dir=Path(getenv("ARCHFLOW_CASE_UPLOAD_DIR", ".local/cases")),
         repository_root=Path(
             getenv("ARCHFLOW_REPOSITORY_ROOT", Path(__file__).resolve().parents[4])
         ),

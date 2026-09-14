@@ -14,7 +14,9 @@ dist/           旧版静态原型，暂时保留
 PRODUCT_DESIGN.md
 ```
 
-“案例 / 技能库”页面会展示：
+“案例 / 技能库”页面包含两个标签：技能以真实文件夹层级展示全部内容，并支持编辑后创建 GitHub Draft PR；案例提供独立文件上传入口。
+
+现有技能：
 
 - `architectural-concept-presentation`：建筑概念方案演示
 - `aec-technical-bid-authoring`：建筑工程技术标编制
@@ -55,10 +57,16 @@ API 位于 `http://localhost:8000`，交互文档位于 `http://localhost:8000/d
 
 - `GET /health`
 - `GET /api/v1/capabilities`
+- `GET /api/v1/projects`
+- `POST /api/v1/projects`
 - `GET /api/v1/skills`
+- `GET /api/v1/skills/{slug}`
+- `GET /api/v1/skills/{slug}/files/{path}`
+- `POST /api/v1/skills/{slug}/draft-pr`
 - `POST /api/v1/files`
+- `POST /api/v1/cases/files`
 
-上传文件默认保存到 `services/api/.local/uploads`。这是评审阶段的本地适配器，正式环境会替换为 S3 兼容对象存储。
+项目工作区默认位于 `.local/projects/{project_id}`，案例文件位于 `.local/cases`，普通项目上传位于 `.local/uploads`。这些都是评审阶段的本地适配器；正式环境会使用 PostgreSQL 与 S3 兼容对象存储。
 
 ## 当前边界
 

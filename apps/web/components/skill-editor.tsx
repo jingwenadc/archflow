@@ -13,12 +13,8 @@ import {
   type SkillFile,
 } from "@/lib/api";
 import { AppHeader } from "./app-header";
-import { BranchIcon, CheckIcon, ChevronLeft, EditIcon, FileIcon, ImageIcon } from "./icons";
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
-}
+import { BranchIcon, CheckIcon, ChevronLeft, EditIcon, EyeOffIcon } from "./icons";
+import { SkillFileTree } from "./skill-file-tree";
 
 function fileLabel(file: SkillFile) {
   return file.path.split("/").pop() ?? file.path;
@@ -101,23 +97,7 @@ export function SkillEditor({ slug, name, category }: { slug: string; name: stri
         <aside className="skill-files-panel">
           <div className="skill-panel-label"><span>全部内容</span><small>{skill?.files.length ?? 0} 个文件</small></div>
           {loading && <p className="skill-loading">正在读取技能内容…</p>}
-          <nav aria-label="技能文件">
-            {skill?.files.map((file) => {
-              const changed = drafts[file.path] !== undefined && drafts[file.path] !== file.content;
-              return (
-                <button
-                  className={file.path === selectedPath ? "skill-file-item is-active" : "skill-file-item"}
-                  key={file.path}
-                  type="button"
-                  onClick={() => selectFile(file.path)}
-                >
-                  {file.kind === "image" ? <ImageIcon /> : <FileIcon />}
-                  <span><strong>{fileLabel(file)}</strong><small>{file.path.includes("/") ? file.path.split("/").slice(0, -1).join(" / ") : "根目录"}</small></span>
-                  {changed ? <i aria-label="已修改" /> : <em>{formatBytes(file.size)}</em>}
-                </button>
-              );
-            })}
-          </nav>
+          {skill && <SkillFileTree files={skill.files} selectedPath={selectedPath} changedPaths={changes.map((change) => change.path)} onSelect={(file) => selectFile(file.path)} />}
         </aside>
 
         <section className="skill-document-panel">
@@ -143,7 +123,7 @@ export function SkillEditor({ slug, name, category }: { slug: string; name: stri
           {selectedFile?.kind === "image" && (
             <div className="skill-image-preview"><img src={getSkillFileUrl(slug, selectedFile.path)} alt={fileLabel(selectedFile)} /><p>{selectedFile.path}</p></div>
           )}
-          {selectedFile?.kind === "binary" && <div className="skill-empty-file"><FileIcon /><strong>该文件已收录</strong><p>二进制内容暂不提供网页编辑。</p></div>}
+          {selectedFile?.kind === "binary" && <div className="skill-empty-file"><EyeOffIcon /><strong>该文件已收录</strong><p>技术或二进制内容暂不作为主要人工审阅内容。</p></div>}
         </section>
 
         <aside className="draft-panel">

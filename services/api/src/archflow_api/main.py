@@ -9,9 +9,12 @@ from .models import (
     DraftPullRequestRequest,
     DraftPullRequestResult,
     FileRecord,
+    ProjectCreate,
+    ProjectRecord,
     SkillDetail,
     SkillSummary,
 )
+from .project_repository import ProjectRepository
 from .skill_repository import SkillRepository
 from .storage import LocalFileStorage
 
@@ -37,6 +40,8 @@ SKILLS = (
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or load_settings()
     storage = LocalFileStorage(resolved.upload_dir, resolved.max_upload_bytes)
+    case_storage = LocalFileStorage(resolved.case_upload_dir, resolved.max_upload_bytes)
+    projects = ProjectRepository(resolved.project_dir)
     skill_repository = SkillRepository(resolved.repository_root, SKILLS)
     pull_requests = GitHubDraftPullRequests(
         resolved.github_repository,
@@ -70,6 +75,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def list_skills() -> tuple[SkillSummary, ...]:
         return skill_repository.list()
 
+    @app.get("/api/v1/projects", response_model=list[ProjectRecord])
+    def list_projects() -> list[ProjectRecord]:
+        return projects.list()
+
+    @app.post("/api/v1/projects", response_model=ProjectRecord, status_code=201)
+    def create_project(request: ProjectCreate) -> ProjectRecord:
+        return projects.create(request.name)
+
     @app.get("/api/v1/skills/{slug}", response_model=SkillDetail)
     def get_skill(slug: str) -> SkillDetail:
         return skill_repository.detail(slug)
@@ -94,6 +107,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/v1/files", response_model=FileRecord, status_code=201)
     async def upload_file(file: UploadFile = File(...)) -> FileRecord:
         return await storage.save(file)
+
+    @app.post("/api/v1/cases/files", response_model=FileRecord, status_code=201)
+    async def upload_case_file(file: UploadFile = File(...)) -> FileRecord:
+        return await case_storage.save(file)
 
     return app
 

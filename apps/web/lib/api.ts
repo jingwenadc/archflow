@@ -6,6 +6,13 @@ export type UploadedFile = {
   status: "uploaded";
 };
 
+export type Project = {
+  id: string;
+  name: string;
+  created_at: string;
+  status: "ready";
+};
+
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export type SkillFile = {
@@ -48,6 +55,12 @@ export async function uploadProjectFile(file: File): Promise<UploadedFile> {
   return response.json() as Promise<UploadedFile>;
 }
 
+export async function uploadCaseFile(file: File): Promise<UploadedFile> {
+  const body = new FormData();
+  body.append("file", file);
+  return apiRequest<UploadedFile>("/api/v1/cases/files", { method: "POST", body });
+}
+
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, init);
   if (!response.ok) {
@@ -55,6 +68,18 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(error?.detail ?? "请求失败，请稍后重试。");
   }
   return response.json() as Promise<T>;
+}
+
+export function getProjects() {
+  return apiRequest<Project[]>("/api/v1/projects");
+}
+
+export function createProject(name: string) {
+  return apiRequest<Project>("/api/v1/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
 }
 
 export function getSkillDetail(slug: string) {
