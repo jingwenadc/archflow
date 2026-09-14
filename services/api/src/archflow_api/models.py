@@ -38,6 +38,49 @@ class ProjectRecord(BaseModel):
     status: Literal["ready"]
 
 
+class ConversationCreate(BaseModel):
+    project_id: str = Field(min_length=1, max_length=100)
+    module: Literal["concept", "bid", "drawing"]
+    title: str = Field(min_length=1, max_length=120)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        normalized = " ".join(value.split())
+        if not normalized:
+            raise ValueError("Conversation title cannot be blank")
+        return normalized
+
+
+class ConversationRecord(BaseModel):
+    id: str
+    project_id: str
+    module: Literal["concept", "bid", "drawing"]
+    title: str
+    created_at: str
+    updated_at: str
+
+
+class MessageCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=20_000)
+
+    @field_validator("content")
+    @classmethod
+    def normalize_content(cls, value: str) -> str:
+        content = value.strip()
+        if not content:
+            raise ValueError("Message content cannot be blank")
+        return content
+
+
+class MessageRecord(BaseModel):
+    id: str
+    conversation_id: str
+    role: Literal["user", "assistant"]
+    content: str
+    created_at: str
+
+
 class SkillSummary(BaseModel):
     slug: str
     name: str

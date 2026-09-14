@@ -46,6 +46,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [activeConversation, setActiveConversation] = useState(0);
+  const [projectId, setProjectId] = useState("cold-chain-industrial-park");
   const [files, setFiles] = useState(initialFiles);
   const [notice, setNotice] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -91,6 +92,14 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
     setActiveConversation(0);
   }, [module.key]);
 
+  useEffect(() => {
+    const saved = window.localStorage.getItem("archflow.active-project");
+    if (saved) setProjectId(saved);
+    const onChange = (event: Event) => setProjectId((event as CustomEvent<string>).detail);
+    window.addEventListener("archflow:project-changed", onChange);
+    return () => window.removeEventListener("archflow:project-changed", onChange);
+  }, []);
+
   function resizePanel(side: "left" | "right", event: PointerEvent<HTMLButtonElement>) {
     const startX = event.clientX;
     const startWidth = side === "left" ? leftWidth : rightWidth;
@@ -131,7 +140,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
       ]);
 
       try {
-        const uploaded = await uploadProjectFile(file);
+        const uploaded = await uploadProjectFile(file, projectId);
         setFiles((current) => current.map((item) => item.id === temporaryId
           ? { ...item, id: uploaded.id, detail: `${formatBytes(uploaded.size)} · 已上传`, status: "ready" }
           : item));

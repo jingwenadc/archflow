@@ -56,3 +56,13 @@ class ProjectRepository:
             encoding="utf-8",
         )
         return project
+
+    def uploads_dir(self, project_id: str) -> Path:
+        project_dir = (self.root / project_id).resolve()
+        if not project_dir.is_relative_to(self.root.resolve()) or not (project_dir / "metadata.json").is_file():
+            from fastapi import HTTPException, status
+
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        uploads_dir = project_dir / "uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        return uploads_dir

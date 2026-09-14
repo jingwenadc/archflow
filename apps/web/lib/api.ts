@@ -13,6 +13,23 @@ export type Project = {
   status: "ready";
 };
 
+export type Conversation = {
+  id: string;
+  project_id: string;
+  module: "concept" | "bid" | "drawing";
+  title: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Message = {
+  id: string;
+  conversation_id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
+
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export type SkillFile = {
@@ -38,11 +55,12 @@ export type DraftPullRequest = {
   branch: string;
 };
 
-export async function uploadProjectFile(file: File): Promise<UploadedFile> {
+export async function uploadProjectFile(file: File, projectId?: string): Promise<UploadedFile> {
   const body = new FormData();
   body.append("file", file);
 
-  const response = await fetch(`${apiBaseUrl}/api/v1/files`, {
+  const endpoint = projectId ? `/api/v1/files?project_id=${encodeURIComponent(projectId)}` : "/api/v1/files";
+  const response = await fetch(`${apiBaseUrl}${endpoint}`, {
     method: "POST",
     body,
   });
@@ -79,6 +97,30 @@ export function createProject(name: string) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
+  });
+}
+
+export function getConversations(projectId: string, module: Conversation["module"]) {
+  return apiRequest<Conversation[]>(`/api/v1/conversations?project_id=${encodeURIComponent(projectId)}&module=${module}`);
+}
+
+export function createConversation(projectId: string, module: Conversation["module"], title: string) {
+  return apiRequest<Conversation>("/api/v1/conversations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: projectId, module, title }),
+  });
+}
+
+export function getMessages(conversationId: string) {
+  return apiRequest<Message[]>(`/api/v1/conversations/${encodeURIComponent(conversationId)}/messages`);
+}
+
+export function sendMessage(conversationId: string, content: string) {
+  return apiRequest<Message>(`/api/v1/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
   });
 }
 

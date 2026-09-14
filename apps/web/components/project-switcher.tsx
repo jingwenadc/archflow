@@ -52,6 +52,7 @@ export function ProjectSwitcher() {
   function selectProject(project: Project) {
     setActiveId(project.id);
     window.localStorage.setItem(projectStorageKey, project.id);
+    window.dispatchEvent(new CustomEvent("archflow:project-changed", { detail: project.id }));
     setOpen(false);
   }
 
