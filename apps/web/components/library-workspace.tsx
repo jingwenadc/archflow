@@ -13,6 +13,7 @@ type LibraryTab = "skills" | "cases";
 export function LibraryWorkspace() {
   const router = useRouter();
   const [tab, setTab] = useState<LibraryTab>("skills");
+  const [selectedSlug, setSelectedSlug] = useState<string>(skills[0].slug);
   const [details, setDetails] = useState<Record<string, SkillDetail>>({});
   const [loadingSkills, setLoadingSkills] = useState(true);
   const [skillError, setSkillError] = useState<string | null>(null);
@@ -57,6 +58,9 @@ export function LibraryWorkspace() {
     void uploadFiles(event.dataTransfer.files);
   }
 
+  const selectedSkill = skills.find((skill) => skill.slug === selectedSlug) ?? skills[0];
+  const selectedDetail = details[selectedSkill.slug];
+
   return (
     <main className="skills-page">
       <header className="skills-intro">
@@ -75,27 +79,28 @@ export function LibraryWorkspace() {
       </div>
 
       {tab === "skills" ? (
-        <section className="library-skill-browser" role="tabpanel" aria-label="技能">
-          <header><div><h2>技能目录</h2><p>按代码库中的真实文件夹结构展示；闭眼图标表示技术文件，不作为主要人工审阅内容。</p></div><code>skills/</code></header>
-          {loadingSkills && <p className="library-loading">正在读取技能目录…</p>}
-          {skillError && <p className="library-error" role="alert">{skillError}。请确认 API 服务已启动。</p>}
-          <div className="skill-folder-list">
-            {skills.map((skill) => {
-              const detail = details[skill.slug];
-              return (
-                <article className="skill-folder" key={skill.slug}>
-                  <div className="skill-folder-heading">
-                    <FolderIcon />
-                    <div><h3>{skill.name}</h3><code>{skill.slug}</code></div>
-                    <span>{skill.category}</span>
-                    <Link href={`/skills/${skill.slug}`}>查看并编辑</Link>
-                  </div>
-                  {detail && <SkillFileTree files={detail.files} onSelect={() => router.push(`/skills/${skill.slug}`)} />}
-                </article>
-              );
-            })}
-          </div>
-        </section>
+        <div className="library-skill-layout" role="tabpanel" aria-label="技能">
+          <section className="library-skill-browser">
+            <header>
+              <div><p className="skill-browser-category">{selectedSkill.category}</p><h2>{selectedSkill.name}</h2><code>skills/{selectedSkill.slug}</code></div>
+              <Link href={`/skills/${selectedSkill.slug}`}>查看并编辑</Link>
+            </header>
+            <div className="skill-browser-note"><FolderIcon /><p>完整文件目录</p><span>闭眼图标表示技术文件，不作为主要人工审阅内容。</span></div>
+            {loadingSkills && <p className="library-loading">正在读取技能目录…</p>}
+            {skillError && <p className="library-error" role="alert">{skillError}。请确认 API 服务已启动。</p>}
+            {selectedDetail && <SkillFileTree files={selectedDetail.files} onSelect={() => router.push(`/skills/${selectedSkill.slug}`)} />}
+          </section>
+
+          <aside className="skill-selector" aria-label="选择技能">
+            <header><strong>选择技能</strong><span>{skills.length}</span></header>
+            {skills.map((skill, index) => (
+              <button className={skill.slug === selectedSkill.slug ? "is-active" : ""} key={skill.slug} type="button" onClick={() => setSelectedSlug(skill.slug)}>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <div><small>{skill.category}</small><strong>{skill.name}</strong><code>{details[skill.slug]?.files.length ?? "—"} 个文件</code></div>
+              </button>
+            ))}
+          </aside>
+        </div>
       ) : (
         <section className="case-library" role="tabpanel" aria-label="案例">
           <div className="case-upload-zone" onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
