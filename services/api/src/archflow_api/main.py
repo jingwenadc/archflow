@@ -93,7 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def list_conversations(project_id: str, module: str) -> list[ConversationRecord]:
         if module not in {"concept", "bid", "drawing"}:
             raise HTTPException(status_code=422, detail="Unsupported module.")
-        return conversations.list(project_id, module)
+        return conversations.list_conversations(project_id, module)
 
     @app.post("/api/v1/conversations", response_model=ConversationRecord, status_code=201)
     def create_conversation(request: ConversationCreate) -> ConversationRecord:
@@ -101,7 +101,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/v1/conversations/{conversation_id}/messages", response_model=list[MessageRecord])
     def list_messages(conversation_id: str) -> list[MessageRecord]:
-        return conversations.messages(conversation_id)
+        return conversations.list_messages(conversation_id)
 
     @app.post("/api/v1/conversations/{conversation_id}/messages", response_model=MessageRecord, status_code=201)
     def create_message(conversation_id: str, request: MessageCreate) -> MessageRecord:

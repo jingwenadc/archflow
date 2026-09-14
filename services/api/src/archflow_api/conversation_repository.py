@@ -36,7 +36,7 @@ class ConversationRepository:
         connection.row_factory = sqlite3.Row
         return connection
 
-    def list(self, project_id: str, module: str) -> list[ConversationRecord]:
+    def list_conversations(self, project_id: str, module: str) -> list[ConversationRecord]:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM conversations WHERE project_id = ? AND module = ? ORDER BY updated_at DESC",
@@ -57,7 +57,7 @@ class ConversationRepository:
             )
         return record
 
-    def messages(self, conversation_id: str) -> list[MessageRecord]:
+    def list_messages(self, conversation_id: str) -> list[MessageRecord]:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC",
