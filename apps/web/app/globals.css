@@ -137,13 +137,21 @@ a { color: inherit; text-decoration: none; }
 .skills-resource-panel, .skills-context-panel { min-width: 0; min-height: 0; overflow-y: auto; background: var(--paper); }
 .skills-resource-panel { padding: 22px 16px; border-right: 1px solid var(--line); }
 .skills-resource-panel.is-collapsed { width: 48px; padding: 10px 6px; overflow: hidden; }
-.skills-resource-panel > .skill-file-tree { margin-top: 18px; padding: 7px 0; }
-.skills-skill-list { margin: 18px -4px 0; padding-bottom: 9px; border-bottom: 1px solid var(--line); }
-.skills-skill-list button { width: 100%; min-height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; text-align: left; }
-.skills-skill-list button:hover { background: #f2f5f7; color: var(--ink); }
-.skills-skill-list button.is-active { background: var(--navy-soft); color: var(--ink); font-weight: 700; }
-.skills-skill-list svg { width: 16px; color: var(--navy); }
-.skills-skill-list span { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.skills-skill-list { margin: 18px -4px 0; border-top: 1px solid var(--line); }
+.skill-accordion { border-bottom: 1px solid var(--line); }
+.skill-accordion-header { width: 100%; min-height: 62px; display: grid; grid-template-columns: 14px 19px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 8px 8px; border: 0; background: transparent; color: var(--muted); cursor: pointer; text-align: left; }
+.skill-accordion-header:hover { background: #f2f5f7; color: var(--ink); }
+.skill-accordion.is-active > .skill-accordion-header { background: var(--navy-soft); color: var(--ink); }
+.skill-accordion-header > svg { width: 19px; color: var(--navy); }
+.skill-accordion-chevron { display: grid; place-items: center; color: var(--quiet); }
+.skill-accordion-chevron svg { width: 14px; }
+.skill-accordion-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.skill-accordion-copy strong { overflow: hidden; font-size: 14px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.skill-accordion-copy small { overflow: hidden; color: var(--quiet); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.skill-accordion-count { min-width: 18px; color: var(--quiet); font-size: 10px; text-align: right; }
+.skill-accordion-content { margin: 0 8px 8px 29px; border-left: 1px solid var(--line-strong); }
+.skill-accordion-content .skill-file-tree { padding: 3px 0 3px 4px; }
+.skill-accordion-content .library-loading { margin: 12px 10px; }
 .skills-resource-empty { min-height: 180px; display: grid; place-content: center; justify-items: center; gap: 10px; color: var(--quiet); text-align: center; }
 .skills-resource-empty svg { width: 30px; color: var(--navy); }
 .skills-resource-empty p { margin: 0; font-size: 12px; }

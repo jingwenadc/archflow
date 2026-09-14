@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { createSkillDraftPullRequest, getSkillDetail, getSkillFileUrl, uploadCaseFile, type DraftPullRequest, type SkillDetail, type SkillFile, type UploadedFile } from "@/lib/api";
 import { skills } from "@/lib/workspace-data";
-import { CheckIcon, ChevronLeft, ChevronRight, EditIcon, EyeOffIcon, FolderIcon, UploadIcon } from "./icons";
+import { CheckIcon, ChevronDown, ChevronLeft, ChevronRight, EditIcon, EyeOffIcon, FolderIcon, UploadIcon } from "./icons";
 import { SkillFileTree } from "./skill-file-tree";
 
 type LibraryTab = "skills" | "cases";
@@ -20,6 +20,7 @@ export function LibraryWorkspace() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [expandedSkillSlugs, setExpandedSkillSlugs] = useState<Set<string>>(() => new Set([skills[0].slug]));
   const [loadingSkills, setLoadingSkills] = useState(true);
   const [skillError, setSkillError] = useState<string | null>(null);
   const [caseFiles, setCaseFiles] = useState<UploadedFile[]>([]);
@@ -54,6 +55,14 @@ export function LibraryWorkspace() {
     setPullRequest(null);
   }
 
+  function toggleSkill(slug: string) {
+    setExpandedSkillSlugs((current) => {
+      if (current.has(slug)) return new Set();
+      return new Set([slug]);
+    });
+    if (slug !== selectedSlug) selectSkill(slug);
+  }
+
   async function uploadFiles(files: FileList | File[]) {
     const selected = Array.from(files);
     if (!selected.length) return;
@@ -82,7 +91,19 @@ export function LibraryWorkspace() {
       <aside className={leftCollapsed ? "skills-resource-panel is-collapsed" : "skills-resource-panel"} aria-label="技能文件夹">
         {leftCollapsed ? <button className="rail-button" type="button" onClick={() => setLeftCollapsed(false)} aria-label="展开技能文件夹"><FolderIcon /><ChevronRight /></button> : <>
           <div className="panel-title-row"><div><p className="eyebrow">SKILL FILES</p><h2>{tab === "skills" ? "技能库" : "案例资料"}</h2></div><button className="icon-button" type="button" onClick={() => setLeftCollapsed(true)} aria-label="收起技能文件夹"><ChevronLeft /></button></div>
-          {tab === "skills" ? <><div className="skills-skill-list" aria-label="选择技能">{skills.map((skill) => <button className={skill.slug === selectedSlug ? "is-active" : ""} key={skill.slug} type="button" onClick={() => selectSkill(skill.slug)}><FolderIcon /><span>{skill.name}</span></button>)}</div>{selectedDetail ? <SkillFileTree files={selectedDetail.files} selectedPath={selectedPath} changedPaths={changes.map((change) => change.path)} onSelect={(file) => { setSelectedPath(file.path); setEditing(false); }} /> : <p className="library-loading">正在读取技能目录…</p>}</> : <div className="skills-resource-empty"><FolderIcon /><p>案例上传后会显示在这里</p></div>}
+          {tab === "skills" ? <div className="skills-skill-list" aria-label="选择技能">{skills.map((skill) => {
+            const isOpen = expandedSkillSlugs.has(skill.slug);
+            const detail = details[skill.slug];
+            return <section className={skill.slug === selectedSlug ? "skill-accordion is-active" : "skill-accordion"} key={skill.slug}>
+              <button className="skill-accordion-header" type="button" aria-expanded={isOpen} onClick={() => toggleSkill(skill.slug)}>
+                <span className="skill-accordion-chevron">{isOpen ? <ChevronDown /> : <ChevronRight />}</span>
+                <FolderIcon />
+                <span className="skill-accordion-copy"><strong>{skill.name}</strong><small>{skill.category}</small></span>
+                <span className="skill-accordion-count">{detail ? detail.files.length : "—"}</span>
+              </button>
+              {isOpen && <div className="skill-accordion-content">{detail ? <SkillFileTree files={detail.files} selectedPath={selectedPath} changedPaths={changes.map((change) => change.path)} onSelect={(file) => { setSelectedPath(file.path); setEditing(false); }} /> : <p className="library-loading">正在读取技能目录…</p>}</div>}
+            </section>;
+          })}</div> : <div className="skills-resource-empty"><FolderIcon /><p>案例上传后会显示在这里</p></div>}
         </>}
       </aside>
 
