@@ -24,7 +24,13 @@ export function ProjectSwitcher() {
         setProjects(items);
         const savedId = window.localStorage.getItem(projectStorageKey);
         const next = items.find((project) => project.id === savedId) ?? items[0];
-        if (next) setActiveId(next.id);
+        if (next) {
+          setActiveId(next.id);
+          if (savedId !== next.id) {
+            window.localStorage.setItem(projectStorageKey, next.id);
+            window.dispatchEvent(new CustomEvent("archflow:project-changed", { detail: next.id }));
+          }
+        }
       })
       .catch((reason: Error) => {
         if (!cancelled) setError(reason.message);

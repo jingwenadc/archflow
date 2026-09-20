@@ -2,7 +2,7 @@
 
 面向建筑设计团队的方案设计、投标文件与施工图协同工作台。
 
-当前分支是可供团队评审的基础版本：前后端结构已经建立，文件上传可在本地运行，AI 对话、生成与技能调用只展示界面并保持禁用。工作流引擎仍为 TBD。
+当前分支是可供团队评审的基础版本：前后端结构已经建立，项目资料与文字对话可持久保存。AI 回复、内容生成与技能调用仍保持禁用，工作流引擎仍为 TBD。
 
 ## 代码结构
 
@@ -59,10 +59,15 @@ API 位于 `http://localhost:8000`，交互文档位于 `http://localhost:8000/d
 - `GET /api/v1/capabilities`
 - `GET /api/v1/projects`
 - `POST /api/v1/projects`
+- `GET /api/v1/conversations`
+- `POST /api/v1/conversations`
+- `GET /api/v1/conversations/{id}/messages`
+- `POST /api/v1/conversations/{id}/messages`
 - `GET /api/v1/skills`
 - `GET /api/v1/skills/{slug}`
 - `GET /api/v1/skills/{slug}/files/{path}`
 - `POST /api/v1/skills/{slug}/draft-pr`
+- `GET /api/v1/files`
 - `POST /api/v1/files`
 - `POST /api/v1/cases/files`
 
@@ -72,7 +77,8 @@ API 位于 `http://localhost:8000`，交互文档位于 `http://localhost:8000/d
 
 - 支持界面：图片、PDF、Word、Excel、PowerPoint 上传。
 - 暂不支持：CAD/DWG、DXF、SketchUp、PKPM。
-- 暂不启用：聊天、内容生成、技能执行、认证、数据库持久化。
+- 已启用：项目级文件列表、模块内多对话和用户文字消息的本地持久化。
+- 暂不启用：AI 回复、内容生成、技能执行和认证。
 - 工作流引擎候选：DBOS、Hatchet、Temporal；根据真实任务量和运维成本再决定。
 
 完整产品、UX 和架构决定见 [PRODUCT_DESIGN.md](PRODUCT_DESIGN.md)。开发协作约定见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [AGENTS.md](AGENTS.md)。

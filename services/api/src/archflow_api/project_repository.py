@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from fastapi import HTTPException, status
+
 from .models import ProjectRecord
 
 
@@ -57,12 +59,22 @@ class ProjectRepository:
         )
         return project
 
-    def uploads_dir(self, project_id: str) -> Path:
+    def get(self, project_id: str) -> ProjectRecord:
         project_dir = (self.root / project_id).resolve()
-        if not project_dir.is_relative_to(self.root.resolve()) or not (project_dir / "metadata.json").is_file():
-            from fastapi import HTTPException, status
-
+        metadata_path = project_dir / "metadata.json"
+        if not project_dir.is_relative_to(self.root.resolve()) or not metadata_path.is_file():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found.")
+        try:
+            return ProjectRecord.model_validate_json(metadata_path.read_text("utf-8"))
+        except (OSError, ValueError) as error:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Project metadata is invalid.",
+            ) from error
+
+    def uploads_dir(self, project_id: str) -> Path:
+        self.get(project_id)
+        project_dir = (self.root / project_id).resolve()
         uploads_dir = project_dir / "uploads"
         uploads_dir.mkdir(parents=True, exist_ok=True)
         return uploads_dir

@@ -35,7 +35,8 @@ def test_capabilities_expose_persistent_chat(tmp_path: Path) -> None:
 
 
 def test_upload_supported_file(tmp_path: Path) -> None:
-    response = make_client(tmp_path).post(
+    client = make_client(tmp_path)
+    response = client.post(
         "/api/v1/files",
         files={"file": ("brief.pdf", b"review content", "application/pdf")},
     )
@@ -43,6 +44,7 @@ def test_upload_supported_file(tmp_path: Path) -> None:
     assert response.json()["name"] == "brief.pdf"
     assert response.json()["status"] == "uploaded"
     assert next((tmp_path / "uploads").rglob("original.pdf")).read_bytes() == b"review content"
+    assert client.get("/api/v1/files").json() == [response.json()]
 
 
 def test_upload_rejects_cad(tmp_path: Path) -> None:
@@ -85,6 +87,34 @@ def test_conversation_and_messages_persist(tmp_path: Path) -> None:
     assert message.status_code == 201
     assert message.json()["role"] == "user"
     assert client.get(f"/api/v1/conversations/{conversation_id}/messages").json()[0]["content"] == "整理项目条件"
+    restarted_client = make_client(tmp_path)
+    assert restarted_client.get(
+        "/api/v1/conversations?project_id=cold-chain-industrial-park&module=concept"
+    ).json()[0]["id"] == conversation_id
+    assert restarted_client.get(f"/api/v1/conversations/{conversation_id}/messages").json()[0]["content"] == "整理项目条件"
+
+
+def test_conversations_require_existing_resources(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    missing_project = client.post("/api/v1/conversations", json={
+        "project_id": "missing", "module": "concept", "title": "不会创建",
+    })
+    assert missing_project.status_code == 404
+    assert client.get("/api/v1/conversations?project_id=missing&module=concept").status_code == 404
+    assert client.get("/api/v1/conversations/missing/messages").status_code == 404
+
+
+def test_project_files_are_listed_per_project(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    project = client.post("/api/v1/projects", json={"name": "新项目"}).json()
+    uploaded = client.post(
+        f"/api/v1/files?project_id={project['id']}",
+        files={"file": ("brief.pdf", b"project brief", "application/pdf")},
+    )
+    assert uploaded.status_code == 201
+    assert client.get(f"/api/v1/files?project_id={project['id']}").json() == [uploaded.json()]
+    assert client.get("/api/v1/files?project_id=cold-chain-industrial-park").json() == []
+    assert client.get("/api/v1/files?project_id=missing").status_code == 404
 
 
 def test_case_upload_uses_separate_storage(tmp_path: Path) -> None:

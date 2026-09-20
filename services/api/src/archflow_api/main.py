@@ -93,10 +93,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def list_conversations(project_id: str, module: str) -> list[ConversationRecord]:
         if module not in {"concept", "bid", "drawing"}:
             raise HTTPException(status_code=422, detail="Unsupported module.")
+        projects.get(project_id)
         return conversations.list_conversations(project_id, module)
 
     @app.post("/api/v1/conversations", response_model=ConversationRecord, status_code=201)
     def create_conversation(request: ConversationCreate) -> ConversationRecord:
+        projects.get(request.project_id)
         return conversations.create(request)
 
     @app.get("/api/v1/conversations/{conversation_id}/messages", response_model=list[MessageRecord])
@@ -127,6 +129,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             description=request.description,
             changes=changes,
         )
+
+    @app.get("/api/v1/files", response_model=list[FileRecord])
+    def list_files(project_id: str | None = None) -> list[FileRecord]:
+        if project_id:
+            return LocalFileStorage(projects.uploads_dir(project_id), resolved.max_upload_bytes).list()
+        return storage.list()
 
     @app.post("/api/v1/files", response_model=FileRecord, status_code=201)
     async def upload_file(file: UploadFile = File(...), project_id: str | None = None) -> FileRecord:

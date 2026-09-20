@@ -244,6 +244,9 @@ a { color: inherit; text-decoration: none; }
 .disabled-status { display: inline-flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .disabled-status i { width: 7px; height: 7px; border-radius: 50%; background: #aab3bb; }
 .chat-thread { min-height: 0; flex: 1; padding: 26px clamp(20px, 5vw, 64px); overflow-y: auto; }
+.chat-empty { min-height: 100%; display: grid; place-content: center; gap: 7px; color: var(--muted); text-align: center; }
+.chat-empty strong { color: var(--ink); font-size: 15px; }
+.chat-empty p { max-width: 420px; margin: 0; font-size: 12px; line-height: 1.6; }
 .thread-date { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; color: var(--quiet); font-size: 11px; }
 .thread-date::before, .thread-date::after { content: ""; height: 1px; flex: 1; background: var(--line); }
 .message-row { min-width: 0; display: flex; align-items: flex-start; gap: 10px; margin-bottom: 25px; }
@@ -260,11 +263,13 @@ a { color: inherit; text-decoration: none; }
 .composer-area { padding: 12px clamp(18px, 4vw, 48px) 15px; border-top: 1px solid var(--line); background: var(--paper); }
 .composer-disabled-note { margin: 0 4px 8px; color: var(--muted); font-size: 11px; }
 .composer-shell { display: grid; grid-template-columns: 34px minmax(0, 1fr) 36px; align-items: end; gap: 8px; padding: 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: #f8fafb; }
-.composer-shell textarea { min-height: 44px; max-height: 100px; resize: none; padding: 10px 2px; border: 0; outline: 0; background: transparent; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.composer-shell:focus-within { border-color: #9caef2; box-shadow: 0 0 0 3px rgb(45 90 232 / 0.08); }
+.composer-shell textarea { min-height: 44px; max-height: 100px; resize: none; padding: 10px 2px; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 14px; line-height: 1.5; }
+.composer-shell textarea:disabled { color: var(--quiet); cursor: not-allowed; }
 .composer-shell button { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--quiet); }
 .composer-shell button svg { width: 18px; }
 .composer-shell .send-button { background: #d8dde1; color: white; }
-.composer-shell.is-disabled { opacity: 0.75; }
+.composer-shell .send-button:not(:disabled) { background: var(--blue); cursor: pointer; }
 .professional-note { margin: 8px 0 0; color: var(--quiet); font-size: 10px; text-align: center; }
 
 .output-title-row { padding-bottom: 17px; border-bottom: 1px solid var(--line); }

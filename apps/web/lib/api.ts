@@ -73,6 +73,10 @@ export async function uploadProjectFile(file: File, projectId?: string): Promise
   return response.json() as Promise<UploadedFile>;
 }
 
+export function getProjectFiles(projectId: string) {
+  return apiRequest<UploadedFile[]>(`/api/v1/files?project_id=${encodeURIComponent(projectId)}`);
+}
+
 export async function uploadCaseFile(file: File): Promise<UploadedFile> {
   const body = new FormData();
   body.append("file", file);

@@ -7,6 +7,8 @@ from fastapi import HTTPException, status
 
 from .models import ConversationCreate, ConversationRecord, MessageCreate, MessageRecord
 
+SCHEMA_VERSION = 1
+
 
 class ConversationRepository:
     """SQLite development adapter with a stable API boundary for PostgreSQL later."""
@@ -15,6 +17,10 @@ class ConversationRepository:
         self.database_path = database_path
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
+            current_version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if current_version > SCHEMA_VERSION:
+                raise RuntimeError("Conversation database schema is newer than this API version.")
+            connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS conversations (
@@ -28,18 +34,23 @@ class ConversationRepository:
                 );
                 CREATE INDEX IF NOT EXISTS messages_conversation_idx
                     ON messages(conversation_id, created_at);
+                CREATE INDEX IF NOT EXISTS conversations_project_module_idx
+                    ON conversations(project_id, module, updated_at DESC);
+                PRAGMA user_version = 1;
                 """
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
+        connection = sqlite3.connect(self.database_path, timeout=5)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 5000")
         return connection
 
     def list_conversations(self, project_id: str, module: str) -> list[ConversationRecord]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM conversations WHERE project_id = ? AND module = ? ORDER BY updated_at DESC",
+                "SELECT * FROM conversations WHERE project_id = ? AND module = ? ORDER BY updated_at DESC, id ASC",
                 (project_id, module),
             ).fetchall()
         return [ConversationRecord(**dict(row)) for row in rows]
@@ -59,8 +70,9 @@ class ConversationRepository:
 
     def list_messages(self, conversation_id: str) -> list[MessageRecord]:
         with self._connect() as connection:
+            self._require_conversation(connection, conversation_id)
             rows = connection.execute(
-                "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC",
+                "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, id ASC",
                 (conversation_id,),
             ).fetchall()
         return [MessageRecord(**dict(row)) for row in rows]
@@ -68,8 +80,7 @@ class ConversationRepository:
     def add_message(self, conversation_id: str, request: MessageCreate) -> MessageRecord:
         now = datetime.now(UTC).isoformat()
         with self._connect() as connection:
-            if connection.execute("SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)).fetchone() is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+            self._require_conversation(connection, conversation_id)
             record = MessageRecord(
                 id=str(uuid4()), conversation_id=conversation_id, role="user",
                 content=request.content, created_at=now,
@@ -80,3 +91,8 @@ class ConversationRepository:
             )
             connection.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
         return record
+
+    @staticmethod
+    def _require_conversation(connection: sqlite3.Connection, conversation_id: str) -> None:
+        if connection.execute("SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)).fetchone() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")

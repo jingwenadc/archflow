@@ -1,7 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from "react";
-import { uploadProjectFile } from "@/lib/api";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type PointerEvent } from "react";
+import {
+  createConversation,
+  getConversations,
+  getMessages,
+  getProjectFiles,
+  sendMessage,
+  uploadProjectFile,
+  type Conversation,
+  type Message,
+  type UploadedFile,
+} from "@/lib/api";
 import { type WorkspaceModule } from "@/lib/workspace-data";
 import { AppHeader } from "./app-header";
 import {
@@ -23,11 +33,6 @@ type FileItem = {
   status?: "uploading" | "ready" | "local" | "error";
 };
 
-const initialFiles: FileItem[] = [
-  { id: "sample-brief", name: "设计任务书.pdf", detail: "2.8 MB · 示例文件", kind: "PDF", status: "ready" },
-  { id: "sample-site", name: "场地航拍图.jpg", detail: "4.1 MB · 示例文件", kind: "JPG", status: "ready" },
-];
-
 const allowedExtensions = new Set(["jpg", "jpeg", "png", "webp", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx"]);
 
 function formatBytes(bytes: number) {
@@ -39,15 +44,32 @@ function extensionOf(name: string) {
   return name.split(".").pop()?.toLowerCase() ?? "file";
 }
 
+function toFileItem(file: UploadedFile): FileItem {
+  return {
+    id: file.id,
+    name: file.name,
+    detail: `${formatBytes(file.size)} · 已上传`,
+    kind: extensionOf(file.name).toUpperCase(),
+    status: "ready",
+  };
+}
+
 export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
   const [leftWidth, setLeftWidth] = useState(264);
   const [rightWidth, setRightWidth] = useState(460);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [hydrated, setHydrated] = useState(false);
-  const [activeConversation, setActiveConversation] = useState(0);
   const [projectId, setProjectId] = useState("cold-chain-industrial-park");
-  const [files, setFiles] = useState(initialFiles);
+  const [files, setFiles] = useState<FileItem[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [loadingConversations, setLoadingConversations] = useState(true);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [creatingConversation, setCreatingConversation] = useState(false);
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [draft, setDraft] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -89,16 +111,69 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
   }, [hydrated, leftWidth, rightWidth, leftCollapsed, rightCollapsed]);
 
   useEffect(() => {
-    setActiveConversation(0);
-  }, [module.key]);
-
-  useEffect(() => {
     const saved = window.localStorage.getItem("archflow.active-project");
     if (saved) setProjectId(saved);
     const onChange = (event: Event) => setProjectId((event as CustomEvent<string>).detail);
     window.addEventListener("archflow:project-changed", onChange);
     return () => window.removeEventListener("archflow:project-changed", onChange);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFiles([]);
+    getProjectFiles(projectId)
+      .then((items) => {
+        if (!cancelled) setFiles(items.map(toFileItem));
+      })
+      .catch((reason: Error) => {
+        if (!cancelled) setNotice(reason.message);
+      });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingConversations(true);
+    setConversations([]);
+    setActiveConversationId(null);
+    setMessages([]);
+    setDraft("");
+    getConversations(projectId, module.key)
+      .then((items) => {
+        if (cancelled) return;
+        setConversations(items);
+        setActiveConversationId(items[0]?.id ?? null);
+      })
+      .catch((reason: Error) => {
+        if (!cancelled) setNotice(reason.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingConversations(false);
+      });
+    return () => { cancelled = true; };
+  }, [module.key, projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeConversationId) {
+      setLoadingMessages(false);
+      setMessages([]);
+      return;
+    }
+    setLoadingMessages(true);
+    setMessages([]);
+    getMessages(activeConversationId)
+      .then((items) => {
+        if (!cancelled) setMessages(items);
+      })
+      .catch((reason: Error) => {
+        if (!cancelled) setNotice(reason.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingMessages(false);
+      });
+    return () => { cancelled = true; };
+  }, [activeConversationId]);
 
   function resizePanel(side: "left" | "right", event: PointerEvent<HTMLButtonElement>) {
     const startX = event.clientX;
@@ -125,6 +200,39 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
     window.setTimeout(() => setNotice(null), 2600);
   }
 
+  async function addConversation() {
+    if (creatingConversation) return;
+    setCreatingConversation(true);
+    try {
+      const defaultTitle = module.conversations[conversations.length]
+        ?? `${module.label}对话 ${conversations.length + 1}`;
+      const conversation = await createConversation(projectId, module.key, defaultTitle);
+      setConversations((current) => [conversation, ...current]);
+      setActiveConversationId(conversation.id);
+      announce("已新建对话");
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : "新建对话失败");
+    } finally {
+      setCreatingConversation(false);
+    }
+  }
+
+  async function submitMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const content = draft.trim();
+    if (!activeConversationId || !content || sendingMessage) return;
+    setSendingMessage(true);
+    try {
+      const message = await sendMessage(activeConversationId, content);
+      setMessages((current) => [...current, message]);
+      setDraft("");
+    } catch (reason) {
+      announce(reason instanceof Error ? reason.message : "消息发送失败");
+    } finally {
+      setSendingMessage(false);
+    }
+  }
+
   async function addFiles(selected: FileList | File[]) {
     for (const file of Array.from(selected)) {
       const ext = extensionOf(file.name);
@@ -142,7 +250,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
       try {
         const uploaded = await uploadProjectFile(file, projectId);
         setFiles((current) => current.map((item) => item.id === temporaryId
-          ? { ...item, id: uploaded.id, detail: `${formatBytes(uploaded.size)} · 已上传`, status: "ready" }
+          ? toFileItem(uploaded)
           : item));
         announce(`${file.name} 已上传`);
       } catch {
@@ -158,6 +266,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
     "--left-width": leftCollapsed ? "48px" : `${leftWidth}px`,
     "--right-width": rightCollapsed ? "48px" : `${rightWidth}px`,
   } as CSSProperties;
+  const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId);
 
   return (
     <div className="app-shell">
@@ -220,52 +329,72 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
           </div>
 
           <div className="conversation-tabs" role="tablist" aria-label={`${module.label}对话`}>
-            {module.conversations.map((conversation, index) => (
+            {conversations.map((conversation) => (
               <button
-                key={conversation}
-                className={activeConversation === index ? "conversation-tab is-active" : "conversation-tab"}
+                key={conversation.id}
+                className={activeConversationId === conversation.id ? "conversation-tab is-active" : "conversation-tab"}
                 type="button"
                 role="tab"
-                aria-selected={activeConversation === index}
-                onClick={() => setActiveConversation(index)}
+                aria-selected={activeConversationId === conversation.id}
+                onClick={() => setActiveConversationId(conversation.id)}
               >
-                <span>{conversation}</span>
-                {index === 0 && <i>示例</i>}
+                <span>{conversation.title}</span>
               </button>
             ))}
-            <button className="new-conversation" type="button" disabled title="新建对话将在 AI 服务接入后开放"><PlusIcon /><span>新建对话</span></button>
+            <button className="new-conversation" type="button" disabled={creatingConversation} onClick={() => void addConversation()}>
+              <PlusIcon /><span>{creatingConversation ? "创建中…" : "新建对话"}</span>
+            </button>
           </div>
 
           <div className="conversation-heading">
             <div>
               <p className="eyebrow">{module.eyebrow}</p>
-              <h1>{module.conversations[activeConversation]}</h1>
+              <h1>{activeConversation?.title ?? module.label}</h1>
             </div>
-            <span className="disabled-status"><i />AI 功能待接入</span>
+            <span className="disabled-status"><i />对话已保存 · AI 生成待接入</span>
           </div>
 
           <div className="chat-thread">
-            <div className="thread-date"><span>界面对话示例</span></div>
-            <div className="message-row user-message">
-              <div className="message-bubble"><p>{module.userExample}</p></div>
-              <span className="message-avatar user-avatar">我</span>
-            </div>
-            <div className="message-row assistant-message">
-              <span className="message-avatar archflow-avatar">AF</span>
-              <div className="message-stack">
-                <div className="message-bubble"><p>{module.assistantExample}</p></div>
-                <span className="message-meta">ArchFlow · 静态示例</span>
-              </div>
-            </div>
+            {loadingConversations || loadingMessages ? (
+              <div className="chat-empty"><strong>正在读取项目对话…</strong></div>
+            ) : !activeConversation ? (
+              <div className="chat-empty"><strong>还没有对话</strong><p>新建一个对话，消息会保存在当前项目中。</p></div>
+            ) : messages.length === 0 ? (
+              <div className="chat-empty"><strong>开始这段对话</strong><p>你可以先描述目标或引用左侧的项目资料。AI 回复将在模型接入后开放。</p></div>
+            ) : (
+              <>
+                <div className="thread-date"><span>项目对话</span></div>
+                {messages.map((message) => message.role === "user" ? (
+                  <div className="message-row user-message" key={message.id}>
+                    <div className="message-bubble"><p>{message.content}</p></div>
+                    <span className="message-avatar user-avatar">我</span>
+                  </div>
+                ) : (
+                  <div className="message-row assistant-message" key={message.id}>
+                    <span className="message-avatar archflow-avatar">AF</span>
+                    <div className="message-stack">
+                      <div className="message-bubble"><p>{message.content}</p></div>
+                      <span className="message-meta">ArchFlow</span>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
 
           <div className="composer-area">
-            <div className="composer-disabled-note">对话、生成和技能调用将在后端工作流确定后接入。</div>
-            <div className="composer-shell is-disabled" aria-disabled="true">
-              <button type="button" disabled aria-label="添加附件"><PaperclipIcon /></button>
-              <textarea disabled rows={2} placeholder="输入要求，或引用项目资料…" />
-              <button className="send-button" type="button" disabled aria-label="发送消息"><SendIcon /></button>
-            </div>
+            <div className="composer-disabled-note">文字消息会保存到项目；AI 回复、生成与技能调用尚未接入。</div>
+            <form className="composer-shell" onSubmit={(event) => void submitMessage(event)}>
+              <button type="button" disabled aria-label="添加附件" title="请从左侧上传项目资料"><PaperclipIcon /></button>
+              <textarea
+                rows={2}
+                value={draft}
+                disabled={!activeConversation || sendingMessage}
+                placeholder={activeConversation ? "输入要求，或引用项目资料…" : "请先新建对话"}
+                onChange={(event) => setDraft(event.target.value)}
+              />
+              <button className="send-button" type="submit" disabled={!activeConversation || !draft.trim() || sendingMessage} aria-label="发送消息"><SendIcon /></button>
+            </form>
             <p className="professional-note">AI 生成内容需由设计师或相应专业工程师复核</p>
           </div>
         </section>
