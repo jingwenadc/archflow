@@ -10,6 +10,7 @@ class Settings:
     max_upload_bytes: int = 50 * 1024 * 1024
     project_dir: Path = Path(".local/projects")
     case_upload_dir: Path = Path(".local/cases")
+    database_path: Path = Path(".local/archflow.sqlite3")
     repository_root: Path = Path(".")
     github_repository: str = "jingwenadc/archflow"
     github_base_branch: str = "main"
@@ -27,6 +28,7 @@ def load_settings() -> Settings:
         allowed_origins=origins,
         project_dir=Path(getenv("ARCHFLOW_PROJECT_DIR", ".local/projects")),
         case_upload_dir=Path(getenv("ARCHFLOW_CASE_UPLOAD_DIR", ".local/cases")),
+        database_path=Path(getenv("ARCHFLOW_DATABASE_PATH", ".local/archflow.sqlite3")),
         repository_root=Path(
             getenv("ARCHFLOW_REPOSITORY_ROOT", Path(__file__).resolve().parents[4])
         ),

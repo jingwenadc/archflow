@@ -1,14 +1,19 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from .config import Settings, load_settings
+from .conversation_repository import ConversationRepository
 from .github import GitHubDraftPullRequests
 from .models import (
     CapabilitySet,
+    ConversationCreate,
+    ConversationRecord,
     DraftPullRequestRequest,
     DraftPullRequestResult,
     FileRecord,
+    MessageCreate,
+    MessageRecord,
     ProjectCreate,
     ProjectRecord,
     SkillDetail,
@@ -42,6 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     storage = LocalFileStorage(resolved.upload_dir, resolved.max_upload_bytes)
     case_storage = LocalFileStorage(resolved.case_upload_dir, resolved.max_upload_bytes)
     projects = ProjectRepository(resolved.project_dir)
+    conversations = ConversationRepository(resolved.database_path)
     skill_repository = SkillRepository(resolved.repository_root, SKILLS)
     pull_requests = GitHubDraftPullRequests(
         resolved.github_repository,
@@ -66,7 +72,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return CapabilitySet(
             release="review-ui",
             file_upload=True,
-            chat=False,
+            chat=True,
             generation=False,
             workflow_engine="tbd",
         )
@@ -82,6 +88,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/v1/projects", response_model=ProjectRecord, status_code=201)
     def create_project(request: ProjectCreate) -> ProjectRecord:
         return projects.create(request.name)
+
+    @app.get("/api/v1/conversations", response_model=list[ConversationRecord])
+    def list_conversations(project_id: str, module: str) -> list[ConversationRecord]:
+        if module not in {"concept", "bid", "drawing"}:
+            raise HTTPException(status_code=422, detail="Unsupported module.")
+        projects.get(project_id)
+        return conversations.list_conversations(project_id, module)
+
+    @app.post("/api/v1/conversations", response_model=ConversationRecord, status_code=201)
+    def create_conversation(request: ConversationCreate) -> ConversationRecord:
+        projects.get(request.project_id)
+        return conversations.create(request)
+
+    @app.get("/api/v1/conversations/{conversation_id}/messages", response_model=list[MessageRecord])
+    def list_messages(conversation_id: str) -> list[MessageRecord]:
+        return conversations.list_messages(conversation_id)
+
+    @app.post("/api/v1/conversations/{conversation_id}/messages", response_model=MessageRecord, status_code=201)
+    def create_message(conversation_id: str, request: MessageCreate) -> MessageRecord:
+        return conversations.add_message(conversation_id, request)
 
     @app.get("/api/v1/skills/{slug}", response_model=SkillDetail)
     def get_skill(slug: str) -> SkillDetail:
@@ -104,8 +130,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             changes=changes,
         )
 
+    @app.get("/api/v1/files", response_model=list[FileRecord])
+    def list_files(project_id: str | None = None) -> list[FileRecord]:
+        if project_id:
+            return LocalFileStorage(projects.uploads_dir(project_id), resolved.max_upload_bytes).list()
+        return storage.list()
+
     @app.post("/api/v1/files", response_model=FileRecord, status_code=201)
-    async def upload_file(file: UploadFile = File(...)) -> FileRecord:
+    async def upload_file(file: UploadFile = File(...), project_id: str | None = None) -> FileRecord:
+        if project_id:
+            return await LocalFileStorage(projects.uploads_dir(project_id), resolved.max_upload_bytes).save(file)
         return await storage.save(file)
 
     @app.post("/api/v1/cases/files", response_model=FileRecord, status_code=201)

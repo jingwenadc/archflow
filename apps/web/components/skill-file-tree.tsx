@@ -41,10 +41,6 @@ function buildTree(files: SkillFile[]): TreeNode[] {
   return root.children;
 }
 
-function collectFolderPaths(nodes: TreeNode[]): string[] {
-  return nodes.flatMap((node) => node.type === "folder" ? [node.path, ...collectFolderPaths(node.children)] : []);
-}
-
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
@@ -68,7 +64,7 @@ export function SkillFileTree({
   onSelect: (file: SkillFile) => void;
 }) {
   const nodes = useMemo(() => buildTree(files), [files]);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(collectFolderPaths(nodes)));
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const changed = new Set(changedPaths);
 
   function toggle(path: string) {
