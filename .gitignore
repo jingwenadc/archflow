@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.production.example
 node_modules/
 .next/
 .venv/
@@ -14,3 +15,5 @@ __pycache__/
 *.pyc
 *.tsbuildinfo
 *.zip
+deploy/nginx/.htpasswd
+.env.production

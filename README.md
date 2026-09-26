@@ -82,3 +82,5 @@ API 位于 `http://localhost:8000`，交互文档位于 `http://localhost:8000/d
 - 工作流引擎候选：DBOS、Hatchet、Temporal；根据真实任务量和运维成本再决定。
 
 完整产品、UX 和架构决定见 [PRODUCT_DESIGN.md](PRODUCT_DESIGN.md)。开发协作约定见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [AGENTS.md](AGENTS.md)。
+
+香港单机 Docker 部署、Basic Auth、HTTPS 和备份操作见 [DEPLOYMENT.md](DEPLOYMENT.md)。
