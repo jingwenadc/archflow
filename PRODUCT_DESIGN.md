@@ -79,6 +79,8 @@ flowchart TD
 
 上传临时文件使用受保护的 `/data/tmp` 磁盘目录，Nginx API 关闭请求缓冲，避免 23.5 MB 文件耗尽 16 MB tmpfs。备份覆盖 SQLite 和 `/data` 项目原文件、索引、版本；应定期验证恢复，不仅检查压缩包存在。
 
+Nginx 使用 Docker 内部 DNS 动态解析 web/api 容器，避免更新容器 IP 后持续 502。配置依赖 Compose 中的 Nginx 1.28；共享内存 upstream 与 `resolve` 的配置见 [官方说明](https://nginx.org/en/docs/http/ngx_http_upstream_module.html#resolve)。
+
 离线长文档测试：在 documents 镜像内运行 `services/api/scripts/document_smoke.py /test-output --pages 100 --chapters 100`，合成验收输出 100 页 PPTX 和 121 页 DOCX。真实模型冒烟脚本 `services/api/scripts/agent_smoke.py` 需显式 `--run-paid-test` 和网站测试密码；创建独立虚构项目，最多 70 次调用/25 万累计 tokens，不读取用户项目，不自动批准用户任务。离线性能测试不代表 100 页真实设计质量验收。
 
 ### 验收原型
