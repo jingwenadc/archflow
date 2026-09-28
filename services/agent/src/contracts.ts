@@ -5,6 +5,9 @@ export type ArtifactUnit = {
   body: string;
   evidence: Array<string>;
   missing_facts: Array<string>;
+  layout?: "cover" | "text" | "image" | "table";
+  image_id?: string | null;
+  table?: Array<Array<string>>;
 };
 
 export type ClaimedJob = {
@@ -12,6 +15,8 @@ export type ClaimedJob = {
   lease_id: string;
   skills: Array<SkillSnapshot>;
   current_units: Array<ArtifactUnit>;
+  sources?: Array<Record<string, unknown>>;
+  revision_units?: Array<number>;
 };
 
 export type DocumentPlan = {
@@ -138,4 +143,4 @@ export type UsageRecord = {
   total_tokens: number;
 };
 
-export const schemas = {"DocumentPlan": {"properties": {"skill_slug": {"maxLength": 100, "minLength": 1, "type": "string"}, "summary": {"maxLength": 4000, "minLength": 1, "type": "string"}, "sections": {"items": {"properties": {"start_unit": {"maximum": 500, "minimum": 1, "type": "integer"}, "end_unit": {"maximum": 500, "minimum": 1, "type": "integer"}, "objective": {"maxLength": 2000, "minLength": 1, "type": "string"}}, "required": ["title", "start_unit", "end_unit", "objective"], "type": "object"}, "maxItems": 30, "minItems": 1, "type": "array"}}, "required": ["skill_slug", "summary", "sections"], "type": "object"}, "UnitBatch": {"properties": {"units": {"items": {"properties": {"unit_index": {"maximum": 500, "minimum": 1, "type": "integer"}, "body": {"maxLength": 12000, "minLength": 1, "type": "string"}, "evidence": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}, "missing_facts": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}}, "required": ["unit_index", "title", "body", "evidence", "missing_facts"], "type": "object"}, "maxItems": 10, "minItems": 1, "type": "array"}}, "required": ["units"], "type": "object"}, "ReviewResult": {"properties": {"passed": {"type": "boolean"}, "summary": {"maxLength": 4000, "minLength": 1, "type": "string"}, "issues": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}}, "required": ["passed", "summary", "issues"], "type": "object"}};
+export const schemas = {"DocumentPlan": {"properties": {"skill_slug": {"maxLength": 100, "minLength": 1, "type": "string"}, "summary": {"maxLength": 4000, "minLength": 1, "type": "string"}, "sections": {"items": {"properties": {"title": {"maxLength": 200, "minLength": 1, "type": "string"}, "start_unit": {"maximum": 500, "minimum": 1, "type": "integer"}, "end_unit": {"maximum": 500, "minimum": 1, "type": "integer"}, "objective": {"maxLength": 2000, "minLength": 1, "type": "string"}}, "required": ["title", "start_unit", "end_unit", "objective"], "type": "object"}, "maxItems": 30, "minItems": 1, "type": "array"}}, "required": ["skill_slug", "summary", "sections"], "type": "object"}, "UnitBatch": {"properties": {"units": {"items": {"properties": {"unit_index": {"maximum": 500, "minimum": 1, "type": "integer"}, "title": {"maxLength": 200, "minLength": 1, "type": "string"}, "body": {"maxLength": 12000, "minLength": 1, "type": "string"}, "evidence": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}, "missing_facts": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}, "layout": {"default": "text", "enum": ["cover", "text", "image", "table"], "type": "string"}, "image_id": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null}, "table": {"items": {"items": {"type": "string"}, "type": "array"}, "maxItems": 15, "type": "array"}}, "required": ["unit_index", "title", "body", "evidence", "missing_facts"], "type": "object"}, "maxItems": 10, "minItems": 1, "type": "array"}}, "required": ["units"], "type": "object"}, "ReviewResult": {"properties": {"passed": {"type": "boolean"}, "summary": {"maxLength": 4000, "minLength": 1, "type": "string"}, "issues": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}}, "required": ["passed", "summary", "issues"], "type": "object"}};

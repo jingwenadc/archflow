@@ -6,6 +6,8 @@ from archflow_api import models
 
 
 def typescript(schema: dict) -> str:
+    if isinstance(schema, bool):
+        return "unknown" if schema else "never"
     if "$ref" in schema:
         return schema["$ref"].split("/")[-1]
     if "anyOf" in schema:
@@ -31,7 +33,8 @@ def resolve(schema: dict, definitions: dict) -> dict:
         return schema
     if "$ref" in schema:
         return resolve(definitions[schema["$ref"].split("/")[-1]], definitions)
-    return {key: ([resolve(v, definitions) for v in value] if isinstance(value, list)
+    return {key: ({name: resolve(field, definitions) for name, field in value.items()} if key == "properties"
+                  else [resolve(v, definitions) for v in value] if isinstance(value, list)
                   else resolve(value, definitions) if isinstance(value, dict) else value)
             for key, value in schema.items() if key not in {"$defs", "title"}}
 

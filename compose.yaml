@@ -17,6 +17,7 @@ services:
       ARCHFLOW_CASE_UPLOAD_DIR: /data/cases
       ARCHFLOW_DATABASE_PATH: /data/archflow.sqlite3
       ARCHFLOW_REPOSITORY_ROOT: /app
+      TMPDIR: /data/tmp
       ARCHFLOW_ALLOWED_ORIGINS: ${ARCHFLOW_ALLOWED_ORIGINS:-http://localhost:8080}
       ARCHFLOW_GITHUB_REPOSITORY: ${ARCHFLOW_GITHUB_REPOSITORY:-jingwenadc/archflow}
       ARCHFLOW_GITHUB_BASE_BRANCH: ${ARCHFLOW_GITHUB_BASE_BRANCH:-main}
@@ -51,7 +52,7 @@ services:
       ARCHFLOW_WORKER_TOKEN: ${ARCHFLOW_WORKER_TOKEN:-}
       ARCHFLOW_LLM_BASE_URL: ${ARCHFLOW_LLM_BASE_URL:-}
       ARCHFLOW_LLM_API_KEY: ${ARCHFLOW_LLM_API_KEY:-}
-      ARCHFLOW_LLM_CONTEXT_WINDOW: ${ARCHFLOW_LLM_CONTEXT_WINDOW:-32768}
+      ARCHFLOW_LLM_CONTEXT_WINDOW: ${ARCHFLOW_LLM_CONTEXT_WINDOW:-65536}
       ARCHFLOW_LLM_MAX_OUTPUT_TOKENS: ${ARCHFLOW_LLM_MAX_OUTPUT_TOKENS:-8192}
     depends_on:
       api:
@@ -64,6 +65,33 @@ services:
     tmpfs:
       - /tmp:size=128m,mode=1777
     mem_limit: 512m
+
+  documents:
+    build:
+      context: .
+      dockerfile: services/documents/Dockerfile
+    environment:
+      ARCHFLOW_DATABASE_PATH: /data/archflow.sqlite3
+      ARCHFLOW_PROJECT_DIR: /data/projects
+      TMPDIR: /data/tmp
+    volumes:
+      - ${ARCHFLOW_DATA_DIR:-./.local/deployment-data}:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    mem_limit: 1g
+    network_mode: none
+    healthcheck:
+      test: ["CMD", "python", "-c", "import time; from pathlib import Path; assert time.time()-Path('/tmp/archflow-documents-health').stat().st_mtime < 90"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 
   web:
     build:
@@ -112,7 +140,7 @@ services:
     read_only: true
     tmpfs:
       - /etc/nginx/conf.d:size=1m,mode=0755
-      - /var/cache/nginx:size=16m,mode=0755
+      - /var/cache/nginx:size=256m,mode=0755
       - /var/run:size=1m,mode=0755
       - /tmp:size=8m,mode=1777
     healthcheck:

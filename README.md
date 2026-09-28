@@ -2,7 +2,7 @@
 
 面向建筑设计团队的方案设计、投标文件与施工图协同工作台。
 
-当前版本有可选的 Pi 文档代理原型：提纲与逐页策划经用户确认后，分批生成、审校与修订内容草稿。默认禁用，需管理员配置模型 endpoint / 密钥。当前只用文字 brief，尚未解析上传资料或导出最终 PPTX/DOCX；聊天仍只保存文字。架构图、边界与配置统一见 [PRODUCT_DESIGN.md](PRODUCT_DESIGN.md)。
+当前版本提供可选的 Pi 文档工作流：项目级资料解析、聊天接收需求、中间确认卡、两阶段批准、分批生成与文字审校、可编辑 PPTX/DOCX 和 PDF 导出、逐页预览及指定范围修订。模型默认禁用，需管理员配置 endpoint / 密钥；聊天中的即时接收提示是流程提示，不是开放式 AI 问答。成果是需专业复核的审阅版，不冒充正式施工图或最终技术标。架构、UX、边界与验收统一见 [PRODUCT_DESIGN.md](PRODUCT_DESIGN.md)。
 
 ## 代码结构
 
@@ -10,6 +10,7 @@
 apps/web/       Next.js + React + TypeScript
 services/api/   FastAPI 与本地文件存储适配器
 services/agent/ Pi SDK Worker（Responses、受限工具、检查点恢复）
+services/documents/ 独立 CPU Worker（Office/PDF 解析、OCR、原生文档排版与渲染）
 skills/         已有建筑专业技能
 dist/           旧版静态原型，暂时保留
 PRODUCT_DESIGN.md
@@ -93,8 +94,8 @@ Pi 测试使用 localhost 模拟 Responses 供应商，不需要真实 API key�
 
 - 支持界面：图片、PDF、Word、Excel、PowerPoint 上传。
 - 暂不支持：CAD/DWG、DXF、SketchUp、PKPM。
-- 已启用：项目级文件列表、模块内多对话和用户文字消息的本地持久化。
-- 暂不启用：AI 回复、内容生成、技能执行和认证。
+- 已启用：项目资料解析、模块内多对话、流程接收提示、可配置的分批生成/审校、可编辑文档和指定页修订；部署有共享密码保护。
+- 暂不支持：自由问答式 AI 聊天、工程计算、自动效果图/动画生成、模板像素级复刻、公开多租户认证与权限。
 - 工作流引擎候选：DBOS、Hatchet、Temporal；根据真实任务量和运维成本再决定。
 
 完整产品、UX 和架构决定见 [PRODUCT_DESIGN.md](PRODUCT_DESIGN.md)。开发协作约定见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [AGENTS.md](AGENTS.md)。

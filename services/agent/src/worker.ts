@@ -41,7 +41,7 @@ async function main() {
   };
   const config: ModelConfig | null = enabled ? {
     baseUrl: required("ARCHFLOW_LLM_BASE_URL"), apiKey: required("ARCHFLOW_LLM_API_KEY"),
-    contextWindow: positive("ARCHFLOW_LLM_CONTEXT_WINDOW", 32768), maxOutputTokens: positive("ARCHFLOW_LLM_MAX_OUTPUT_TOKENS", 8192), workDir: process.env.ARCHFLOW_AGENT_DIR ?? "/tmp/archflow-agent",
+    contextWindow: positive("ARCHFLOW_LLM_CONTEXT_WINDOW", 65536), maxOutputTokens: positive("ARCHFLOW_LLM_MAX_OUTPUT_TOKENS", 8192), workDir: process.env.ARCHFLOW_AGENT_DIR ?? "/tmp/archflow-agent",
   } : null;
   if (config && (config.maxOutputTokens >= config.contextWindow || !/^https?:\/\//.test(config.baseUrl))) throw new Error("Invalid provider limits or URL.");
   const api = enabled ? new ApiClient(process.env.ARCHFLOW_API_URL ?? "http://api:8000", required("ARCHFLOW_WORKER_TOKEN")) : null;

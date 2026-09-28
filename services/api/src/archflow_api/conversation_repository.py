@@ -1,7 +1,8 @@
 import sqlite3
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
+from uuid import uuid4, uuid5, NAMESPACE_URL
 
 from fastapi import HTTPException, status
 
@@ -40,12 +41,23 @@ class ConversationRepository:
                 """
             )
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self):
         connection = sqlite3.connect(self.database_path, timeout=5)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 5000")
-        return connection
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
+    def get(self, conversation_id: str) -> ConversationRecord:
+        with self._connect() as connection:
+            self._require_conversation(connection, conversation_id)
+            row = connection.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
+        return ConversationRecord(**dict(row))
 
     def list_conversations(self, project_id: str, module: str) -> list[ConversationRecord]:
         with self._connect() as connection:
@@ -79,10 +91,17 @@ class ConversationRepository:
 
     def add_message(self, conversation_id: str, request: MessageCreate) -> MessageRecord:
         now = datetime.now(UTC).isoformat()
+        message_id = str(uuid5(NAMESPACE_URL, f"archflow:{conversation_id}:{request.client_id}")) if request.client_id else str(uuid4())
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             self._require_conversation(connection, conversation_id)
+            existing = connection.execute("SELECT * FROM messages WHERE id=?", (message_id,)).fetchone()
+            if existing:
+                if existing["content"] != request.content:
+                    raise HTTPException(409, "此消息重试标识已用于其他内容。")
+                return MessageRecord(**dict(existing))
             record = MessageRecord(
-                id=str(uuid4()), conversation_id=conversation_id, role="user",
+                id=message_id, conversation_id=conversation_id, role="user",
                 content=request.content, created_at=now,
             )
             connection.execute(
@@ -90,7 +109,27 @@ class ConversationRepository:
                 (record.id, record.conversation_id, record.role, record.content, record.created_at),
             )
             connection.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+            title = request.content.replace("\n", " ").strip()[:24]
+            connection.execute("UPDATE conversations SET title=? WHERE id=? AND title='新对话'", (title, conversation_id))
         return record
+
+    def assistant(self, conversation_id: str, content: str, reply_to: str | None = None) -> MessageRecord:
+        now = datetime.now(UTC).isoformat()
+        message_id = str(uuid5(NAMESPACE_URL, f"archflow:reply:{reply_to}")) if reply_to else str(uuid4())
+        record = MessageRecord(id=message_id, conversation_id=conversation_id, role="assistant", content=content, created_at=now)
+        with self._connect() as connection:
+            self._require_conversation(connection, conversation_id)
+            connection.execute("INSERT OR IGNORE INTO messages(id,conversation_id,role,content,created_at) VALUES(?,?,?,?,?)",
+                               (record.id, conversation_id, record.role, content, now))
+        return record
+
+    def rename(self, conversation_id: str, title: str) -> None:
+        title = " ".join(title.split())
+        if not title or len(title) > 120:
+            raise HTTPException(422, "标题应为 1–120 个字符。")
+        with self._connect() as connection:
+            self._require_conversation(connection, conversation_id)
+            connection.execute("UPDATE conversations SET title=? WHERE id=?", (title, conversation_id))
 
     @staticmethod
     def _require_conversation(connection: sqlite3.Connection, conversation_id: str) -> None:

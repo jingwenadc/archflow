@@ -20,6 +20,7 @@ from .models import (
     GenerationJobDetail, GenerationJobEvent, GenerationJobRecord, JobCheckpoint,
     ReviewResult, SkillSnapshot, UsageRecord,
 )
+from .materials import DocumentRepository
 
 
 def timestamp() -> str:
@@ -62,6 +63,7 @@ def snapshot_skills(repository_root: Path) -> list[SkillSnapshot]:
 class JobRepository:
     def __init__(self, database_path: Path) -> None:
         self.path = database_path
+        self.documents = DocumentRepository(database_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -135,8 +137,9 @@ class JobRepository:
                    (job_id, kind, message, timestamp()))
 
     def create(self, request: GenerationJobCreate, key: str, skills: list[SkillSnapshot],
-               model: str, review_model: str) -> GenerationJobDetail:
-        fingerprint = hashlib.sha256(request.model_dump_json().encode()).hexdigest()
+               model: str, review_model: str, sources: list[dict] | None = None,
+               parent_id: str | None = None, revision_units: list[int] | None = None) -> GenerationJobDetail:
+        fingerprint = hashlib.sha256((request.model_dump_json() + str(parent_id) + str(revision_units)).encode()).hexdigest()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             previous = db.execute("SELECT id,request_hash FROM generation_jobs WHERE project_id=? AND idempotency_key=?",
@@ -155,9 +158,18 @@ class JobRepository:
             columns = ",".join(values)
             placeholders = ",".join("?" for _ in values)
             db.execute(f"INSERT INTO generation_jobs({columns}) VALUES({placeholders})", tuple(values.values()))
+            db.execute("INSERT INTO job_sources VALUES(?,?,?,?)", (job_id, json.dumps(sources or [], ensure_ascii=False), parent_id, json.dumps(revision_units or [])))
             for index, start in enumerate(range(1, request.target_units + 1, request.batch_size)):
                 db.execute("INSERT INTO generation_batches(job_id,batch_index,start_unit,end_unit,status) VALUES(?,?,?,?,?)",
                            (job_id, index, start, min(request.target_units, start + request.batch_size - 1), "pending"))
+            if parent_id:
+                parent = self.require(db, parent_id)
+                db.execute("UPDATE generation_jobs SET stage='generating',outline=? WHERE id=?", (parent["outline"], job_id))
+                db.execute("INSERT INTO generation_units SELECT ?,kind,unit_index,payload FROM generation_units WHERE job_id=?", (job_id, parent_id))
+                for batch in db.execute("SELECT * FROM generation_batches WHERE job_id=?", (job_id,)).fetchall():
+                    if not any(batch["start_unit"] <= i <= batch["end_unit"] for i in revision_units or []):
+                        db.execute("UPDATE generation_batches SET status='completed',review=? WHERE job_id=? AND batch_index=?",
+                                   (json.dumps({"passed": True, "summary": "沿用未修改页面", "issues": []}), job_id, batch["batch_index"]))
             self.event(db, job_id, "queued", "任务已排队；产物为内容草稿。")
         return self.detail(job_id)
 
@@ -214,7 +226,8 @@ class JobRepository:
         detail = self.detail(row["id"])
         batch = next((item for item in detail.batches if item.status != "completed"), None)
         current = self.units(detail.id, "draft", batch.start_unit - 1, batch.end_unit - batch.start_unit + 1) if batch and batch.status == "draft" else []
-        return ClaimedJob(job=detail, lease_id=lease_id, skills=skills, current_units=current)
+        return ClaimedJob(job=detail, lease_id=lease_id, skills=skills, current_units=current,
+                          sources=self.documents.catalog(detail.id), revision_units=self.documents.revisions(detail.id))
 
     def heartbeat(self, job_id: str, lease_id: str) -> None:
         with self.connect() as db:
@@ -246,6 +259,18 @@ class JobRepository:
             db.execute("UPDATE generation_jobs SET status=?,stage=?,error=NULL,lease_id=NULL,lease_until=NULL,updated_at=? WHERE id=?",
                        (new_status, stage, timestamp(), job_id))
             self.event(db, job_id, action, {"cancel": "任务已取消；已保存内容仍可查看。", "approve": "用户批准了当前计划和下一阶段范围。", "retry": "任务重新排队，将保留已有内容与用量。"}[action])
+        return self.detail(job_id)
+
+    def continue_with_budget(self, job_id: str, calls: int, tokens: int) -> GenerationJobDetail:
+        if type(calls) is not int or type(tokens) is not int or not 1 <= calls <= 1000 or not 1000 <= tokens <= 10_000_000:
+            raise HTTPException(422, "上限范围：1–1000 次调用，1000–10000000 累计 tokens。")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = self.require(db, job_id)
+            if row["status"] != "failed" or calls <= row["model_calls"] or tokens <= row["total_tokens"]:
+                raise HTTPException(409, "只能继续失败任务，且批准的总上限必须高于已用量。")
+            db.execute("UPDATE generation_jobs SET max_model_calls=?,max_total_tokens=?,status='queued',error=NULL,lease_id=NULL,lease_until=NULL,updated_at=? WHERE id=?", (calls, tokens, timestamp(), job_id))
+            self.event(db, job_id, "retry", "用户明确批准新的总调用/token 上限，保留检查点继续。")
         return self.detail(job_id)
 
     def reserve_call(self, job_id: str, lease_id: str, usage: UsageRecord) -> None:
@@ -317,8 +342,17 @@ class JobRepository:
                 for unit in units:
                     if not unit.title.strip() or not unit.body.strip():
                         raise HTTPException(422, "Artifact content cannot be blank.")
-                    if any(source != "user-brief" for source in unit.evidence):
-                        raise HTTPException(422, "Only user-brief evidence is available in this prototype.")
+                    sources = self.documents.sources(job_id)
+                    allowed = {"user-brief"} | {page["id"] for doc in sources for page in doc["pages"]}
+                    if any(source not in allowed for source in unit.evidence):
+                        raise HTTPException(422, "Evidence must cite this job's frozen source page IDs.")
+                    if unit.image_id and unit.image_id not in {asset["id"] for doc in sources for asset in doc["assets"]}:
+                        raise HTTPException(422, "Image does not belong to this project snapshot.")
+                    revision_units = self.documents.revisions(job_id)
+                    if kind == "draft" and revision_units and unit.unit_index not in revision_units:
+                        old = db.execute("SELECT payload FROM generation_units WHERE job_id=? AND kind='draft' AND unit_index=?", (job_id, unit.unit_index)).fetchone()
+                        if old and ArtifactUnit.model_validate_json(old[0]) != unit:
+                            raise HTTPException(422, "A scoped revision must preserve all pages outside the authorized range.")
                     db.execute("INSERT INTO generation_units(job_id,kind,unit_index,payload) VALUES(?,?,?,?) ON CONFLICT(job_id,kind,unit_index) DO UPDATE SET payload=excluded.payload",
                                (job_id, kind, unit.unit_index, unit.model_dump_json()))
                 if kind == "draft":
@@ -335,7 +369,7 @@ class JobRepository:
                            (review.model_dump_json(), "completed" if review.passed else "draft", job_id, batch["batch_index"]))
                 if not review.passed and batch["draft_count"] >= row["max_revision_rounds"] + 1:
                     state = "needs_review"
-                if review.passed and batch["end_unit"] == row["target_units"]:
+                if review.passed and not db.execute("SELECT 1 FROM generation_batches WHERE job_id=? AND status!='completed'", (job_id,)).fetchone():
                     stage = "final_review"
             elif checkpoint.action == "final_review":
                 if stage != "final_review" or batch is not None or checkpoint.review is None:

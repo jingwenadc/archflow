@@ -17,6 +17,10 @@ class FileRecord(BaseModel):
     size: int
     content_type: str
     status: Literal["uploaded"]
+    processing_status: Literal["queued", "processing", "ready", "failed"] = "queued"
+    processing_error: str | None = None
+    page_count: int = 0
+    role: Literal["source", "reference", "image", "excluded"] = "source"
 
 
 class ProjectCreate(BaseModel):
@@ -63,6 +67,7 @@ class ConversationRecord(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=20_000)
+    client_id: str | None = Field(default=None, max_length=100)
 
     @field_validator("content")
     @classmethod
@@ -132,7 +137,7 @@ class GenerationJobCreate(BaseModel):
     batch_size: int = Field(default=5, ge=1, le=10)
     max_revision_rounds: int = Field(default=2, ge=0, le=3)
     max_model_calls: int = Field(default=400, ge=1, le=1000)
-    max_total_tokens: int = Field(default=250_000, ge=1000, le=2_000_000)
+    max_total_tokens: int = Field(default=250_000, ge=1000, le=10_000_000)
 
     @field_validator("goal")
     @classmethod
@@ -162,6 +167,9 @@ class ArtifactUnit(BaseModel):
     body: str = Field(min_length=1, max_length=12000)
     evidence: list[str] = Field(max_length=30)
     missing_facts: list[str] = Field(max_length=30)
+    layout: Literal["cover", "text", "image", "table"] = "text"
+    image_id: str | None = None
+    table: list[list[str]] = Field(default_factory=list, max_length=15)
 
 
 class UnitBatch(BaseModel):
@@ -247,3 +255,5 @@ class ClaimedJob(BaseModel):
     lease_id: str
     skills: list[SkillSnapshot]
     current_units: list[ArtifactUnit]
+    sources: list[dict] = Field(default_factory=list)
+    revision_units: list[int] = Field(default_factory=list)

@@ -107,6 +107,7 @@ test("Pi selects/reads skills, pauses for two approvals, iterates revisions and 
     assert.equal(api.job.completed_units, 8);
     assert.equal(api.job.batches[0].draft_count, 2);
     assert.equal(api.job.model_calls, endpoint.requests.length);
+    assert.ok(endpoint.requests.every(request => !request.prompt_cache_key), "Gateway-unsafe affinity must remain disabled.");
     assert.equal(api.job.total_tokens, endpoint.requests.length * 120);
     assert.ok(endpoint.requests.some(request => request.model === "review-model"));
     assert.equal(api.data.draft.length, 8);

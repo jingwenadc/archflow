@@ -5,6 +5,9 @@ export type ArtifactUnit = {
   body: string;
   evidence: Array<string>;
   missing_facts: Array<string>;
+  layout?: "cover" | "text" | "image" | "table";
+  image_id?: string | null;
+  table?: Array<Array<string>>;
 };
 
 export type ClaimedJob = {
@@ -12,6 +15,8 @@ export type ClaimedJob = {
   lease_id: string;
   skills: Array<SkillSnapshot>;
   current_units: Array<ArtifactUnit>;
+  sources?: Array<Record<string, unknown>>;
+  revision_units?: Array<number>;
 };
 
 export type DocumentPlan = {

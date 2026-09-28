@@ -4,6 +4,10 @@ export type UploadedFile = {
   size: number;
   content_type: string;
   status: "uploaded";
+  processing_status: "queued" | "processing" | "ready" | "failed";
+  processing_error: string | null;
+  page_count: number;
+  role: "source" | "reference" | "image" | "excluded";
 };
 
 export type Project = {
@@ -67,7 +71,7 @@ export async function uploadProjectFile(file: File, projectId?: string): Promise
 
   if (!response.ok) {
     const detail = await response.json().catch(() => null);
-    throw new Error(detail?.detail ?? "文件上传失败");
+    throw new Error(detail?.detail ?? (response.status === 413 ? "文件超过上传限制，请拆分或压缩后重试。" : `文件上传失败（HTTP ${response.status}），请重试。`));
   }
 
   return response.json() as Promise<UploadedFile>;
@@ -124,11 +128,11 @@ export function getMessages(conversationId: string) {
   return apiRequest<Message[]>(`/api/v1/conversations/${encodeURIComponent(conversationId)}/messages`);
 }
 
-export function sendMessage(conversationId: string, content: string) {
+export function sendMessage(conversationId: string, content: string, clientId?: string) {
   return apiRequest<Message>(`/api/v1/conversations/${encodeURIComponent(conversationId)}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, client_id: clientId }),
   });
 }
 

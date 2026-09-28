@@ -1,3 +1,6 @@
+import json
+from uuid import uuid4
+from typing import Literal
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -23,6 +26,7 @@ from .models import (
 from .project_repository import ProjectRepository
 from .skill_repository import SkillRepository
 from .storage import LocalFileStorage
+from .materials import DocumentRepository, material_directory
 
 
 SKILLS = (
@@ -49,6 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     case_storage = LocalFileStorage(resolved.case_upload_dir, resolved.max_upload_bytes)
     projects = ProjectRepository(resolved.project_dir)
     conversations = ConversationRepository(resolved.database_path)
+    documents = DocumentRepository(resolved.database_path)
     skill_repository = SkillRepository(resolved.repository_root, SKILLS)
     pull_requests = GitHubDraftPullRequests(
         resolved.github_repository,
@@ -73,7 +78,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/capabilities", response_model=CapabilitySet)
     def capabilities() -> CapabilitySet:
         return CapabilitySet(
-            release="pi-agent-prototype",
+            release="project-document-workspace",
             file_upload=True,
             chat=True,
             generation=resolved.agent_enabled and bool(resolved.worker_token),
@@ -110,7 +115,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/v1/conversations/{conversation_id}/messages", response_model=MessageRecord, status_code=201)
     def create_message(conversation_id: str, request: MessageCreate) -> MessageRecord:
-        return conversations.add_message(conversation_id, request)
+        message = conversations.add_message(conversation_id, request)
+        from .job_repository import JobRepository
+        conversation = conversations.get(conversation_id)
+        jobs = JobRepository(resolved.database_path).list(conversation.project_id, conversation_id)
+        current = jobs[0] if jobs else None
+        if conversation.module == "drawing":
+            reply = "已收到。施工图协同仍在规划中，目前不会生成 CAD 或工程计算结果。"
+        elif current and current.status in {"queued", "running"}:
+            reply = "已收到并保存补充要求。当前任务正在执行，使用的是启动时确认的资料和需求。完成后可据此生成新版本；也可以先取消当前任务。"
+        elif current and current.status in {"waiting_outline", "waiting_storyboard"}:
+            reply = "已收到。你可以先查看提纲或逐页策划，再点击确认继续。如果需要调整，请用下方需求确认卡重新整理提纲；我不会把补充消息当作批准。"
+        else:
+            reply = "已收到你的要求。项目资料会在这些对话中共享。我会先根据资料整理提纲，请在下方确认页数和需求；你可以继续聊天补充受众、风格或重点，无需重复上传。"
+        conversations.assistant(conversation_id, reply, reply_to=message.id)
+        return message
+
+    @app.post("/api/v1/conversations/{conversation_id}/rename")
+    def rename_conversation(conversation_id: str, request: dict):
+        conversations.rename(conversation_id, str(request.get("title", "")))
+        return {"saved": True}
 
     @app.get("/api/v1/skills/{slug}", response_model=SkillDetail)
     def get_skill(slug: str) -> SkillDetail:
@@ -136,14 +160,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/files", response_model=list[FileRecord])
     def list_files(project_id: str | None = None) -> list[FileRecord]:
         if project_id:
-            return LocalFileStorage(projects.uploads_dir(project_id), resolved.max_upload_bytes).list()
+            return LocalFileStorage(projects.uploads_dir(project_id), resolved.max_upload_bytes, documents, project_id).list()
         return storage.list()
 
     @app.post("/api/v1/files", response_model=FileRecord, status_code=201)
     async def upload_file(file: UploadFile = File(...), project_id: str | None = None) -> FileRecord:
         if project_id:
-            return await LocalFileStorage(projects.uploads_dir(project_id), resolved.max_upload_bytes).save(file)
+            return await LocalFileStorage(projects.uploads_dir(project_id), resolved.max_upload_bytes, documents, project_id).save(file)
         return await storage.save(file)
+
+    @app.get("/api/v1/files/{file_id}/original")
+    def original_file(file_id: str, project_id: str):
+        folder = material_directory(projects.uploads_dir(project_id), file_id)
+        metadata = json.loads((folder / "metadata.json").read_text("utf-8"))
+        return FileResponse(next(folder.glob("original.*")), filename=metadata["name"])
+
+    @app.get("/api/v1/files/{file_id}/pages/{page}")
+    def material_page(file_id: str, page: int, project_id: str):
+        folder = material_directory(projects.uploads_dir(project_id), file_id)
+        if not (folder / "index.json").is_file():
+            raise HTTPException(409, "资料仍在解析。")
+        index = json.loads((folder / "index.json").read_text("utf-8"))
+        if page < 1 or page > len(index["pages"]):
+            raise HTTPException(404, "页码不存在。")
+        image_id = index["pages"][page-1].get("image_id")
+        asset = next(asset for asset in index["assets"] if asset["id"] == image_id)
+        return FileResponse(folder / asset["file"], media_type="image/jpeg")
+
+    @app.post("/api/v1/files/{file_id}/role")
+    def file_role(file_id: str, project_id: str, role: Literal["source", "reference", "image", "excluded"]):
+        folder = material_directory(projects.uploads_dir(project_id), file_id)
+        path = folder / "metadata.json"
+        metadata = json.loads(path.read_text("utf-8")) | {"role": role}
+        temporary = folder / f"metadata-{uuid4()}.pending"
+        temporary.write_text(json.dumps(metadata, ensure_ascii=False), "utf-8")
+        temporary.replace(path)
+        return {"saved": True}
+
+    @app.post("/api/v1/files/{file_id}/retry")
+    def retry_file(file_id: str, project_id: str):
+        material_directory(projects.uploads_dir(project_id), file_id)
+        documents.retry(file_id)
+        return {"queued": True}
 
     @app.post("/api/v1/cases/files", response_model=FileRecord, status_code=201)
     async def upload_case_file(file: UploadFile = File(...)) -> FileRecord:
