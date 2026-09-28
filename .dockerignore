@@ -11,6 +11,8 @@
 **/*.pyc
 **/*.tsbuildinfo
 .local
+.worktrees
+services/agent/dist
 tmp
 deliverables
 deploy/nginx/.htpasswd

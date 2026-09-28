@@ -14,6 +14,7 @@ import {
 } from "@/lib/api";
 import { type WorkspaceModule } from "@/lib/workspace-data";
 import { AppHeader } from "./app-header";
+import { GenerationPanel } from "./generation-panel";
 import {
   ChevronLeft,
   ChevronRight,
@@ -269,7 +270,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
   const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId);
 
   return (
-    <div className="app-shell">
+    <div className="app-shell workspace-shell">
       <AppHeader active={module.key} />
 
       <main className="workspace-grid" style={workspaceStyle}>
@@ -351,7 +352,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
               <p className="eyebrow">{module.eyebrow}</p>
               <h1>{activeConversation?.title ?? module.label}</h1>
             </div>
-            <span className="disabled-status"><i />对话已保存 · AI 生成待接入</span>
+            <span className="disabled-status"><i />对话已保存 · AI 回复待接入</span>
           </div>
 
           <div className="chat-thread">
@@ -383,7 +384,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
           </div>
 
           <div className="composer-area">
-            <div className="composer-disabled-note">文字消息会保存到项目；AI 回复、生成与技能调用尚未接入。</div>
+            <div className="composer-disabled-note">文字消息会保存到项目；自动对话尚未接入。生成任务请使用右侧成果区。</div>
             <form className="composer-shell" onSubmit={(event) => void submitMessage(event)}>
               <button type="button" disabled aria-label="添加附件" title="请从左侧上传项目资料"><PaperclipIcon /></button>
               <textarea
@@ -413,22 +414,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
                 <button className="icon-button" type="button" onClick={() => setRightCollapsed(true)} aria-label="收起成果预览"><ChevronRight /></button>
               </div>
 
-              <div className="output-empty">
-                <div className={`output-glyph output-glyph-${module.key}`} aria-hidden="true">
-                  <span /><span /><span />
-                </div>
-                <p className="output-state">尚未生成</p>
-                <h3>{module.previewTitle}将在这里出现</h3>
-                <p>{module.previewDescription}</p>
-              </div>
-
-              <ol className="recommended-flow">
-                {module.workflow.map((step, index) => (
-                  <li key={step}><span>{String(index + 1).padStart(2, "0")}</span><p>{step}</p></li>
-                ))}
-              </ol>
-
-              <button className="disabled-primary" type="button" disabled>生成能力尚未连接</button>
+              <GenerationPanel projectId={projectId} conversationId={activeConversationId} module={module.key} />
             </>
           )}
         </aside>

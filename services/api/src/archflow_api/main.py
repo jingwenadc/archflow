@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from .config import Settings, load_settings
 from .conversation_repository import ConversationRepository
 from .github import GitHubDraftPullRequests
+from .job_routes import job_routers
 from .models import (
     CapabilitySet,
     ConversationCreate,
@@ -55,6 +56,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         resolved.github_token,
     )
     app = FastAPI(title="ArchFlow API", version="0.1.0")
+    for router in job_routers(resolved, projects, conversations):
+        app.include_router(router)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(resolved.allowed_origins),
@@ -70,11 +73,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/capabilities", response_model=CapabilitySet)
     def capabilities() -> CapabilitySet:
         return CapabilitySet(
-            release="review-ui",
+            release="pi-agent-prototype",
             file_upload=True,
             chat=True,
-            generation=False,
-            workflow_engine="tbd",
+            generation=resolved.agent_enabled and bool(resolved.worker_token),
+            workflow_engine="sqlite-worker",
         )
 
     @app.get("/api/v1/skills", response_model=list[SkillSummary])

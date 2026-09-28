@@ -83,13 +83,17 @@ export async function uploadCaseFile(file: File): Promise<UploadedFile> {
   return apiRequest<UploadedFile>("/api/v1/cases/files", { method: "POST", body });
 }
 
-async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, init);
   if (!response.ok) {
     const error = await response.json().catch(() => null);
     throw new Error(error?.detail ?? "请求失败，请稍后重试。");
   }
   return response.json() as Promise<T>;
+}
+
+export function jobDownloadUrl(id: string) {
+  return `${apiBaseUrl}/api/v1/jobs/${encodeURIComponent(id)}/download`;
 }
 
 export function getProjects() {

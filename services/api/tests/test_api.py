@@ -30,7 +30,7 @@ def test_health(tmp_path: Path) -> None:
 def test_capabilities_expose_persistent_chat(tmp_path: Path) -> None:
     response = make_client(tmp_path).get("/api/v1/capabilities")
     assert response.status_code == 200
-    assert response.json()["workflow_engine"] == "tbd"
+    assert response.json()["workflow_engine"] == "sqlite-worker"
     assert response.json()["chat"] is True
 
 
