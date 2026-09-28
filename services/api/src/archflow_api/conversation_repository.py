@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 
 from .models import ConversationCreate, ConversationRecord, MessageCreate, MessageRecord
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class ConversationRepository:
@@ -37,9 +37,13 @@ class ConversationRepository:
                     ON messages(conversation_id, created_at);
                 CREATE INDEX IF NOT EXISTS conversations_project_module_idx
                     ON conversations(project_id, module, updated_at DESC);
-                PRAGMA user_version = 1;
                 """
             )
+            connection.execute("BEGIN IMMEDIATE")
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(conversations)")}
+            if "deleted_at" not in columns:
+                connection.execute("ALTER TABLE conversations ADD COLUMN deleted_at TEXT")
+            connection.execute("PRAGMA user_version = 2")
 
     @contextmanager
     def _connect(self):
@@ -62,7 +66,7 @@ class ConversationRepository:
     def list_conversations(self, project_id: str, module: str) -> list[ConversationRecord]:
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM conversations WHERE project_id = ? AND module = ? ORDER BY updated_at DESC, id ASC",
+                "SELECT * FROM conversations WHERE project_id = ? AND module = ? AND deleted_at IS NULL ORDER BY updated_at DESC, id ASC",
                 (project_id, module),
             ).fetchall()
         return [ConversationRecord(**dict(row)) for row in rows]
@@ -131,7 +135,33 @@ class ConversationRepository:
             self._require_conversation(connection, conversation_id)
             connection.execute("UPDATE conversations SET title=? WHERE id=?", (title, conversation_id))
 
+    def delete(self, conversation_id: str, project_id: str) -> None:
+        """Remove a tab durably and cancel unfinished jobs in the same transaction.
+
+        Keep messages and finished artifacts for recovery; never remove project files.
+        """
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT deleted_at FROM conversations WHERE id=? AND project_id=?",
+                                     (conversation_id, project_id)).fetchone()
+            if row is None:
+                raise HTTPException(404, "Conversation not found in this project.")
+            if row["deleted_at"]:
+                return
+            connection.execute("UPDATE conversations SET deleted_at=?,updated_at=? WHERE id=?", (now, now, conversation_id))
+            if connection.execute("SELECT 1 FROM sqlite_master WHERE name='generation_jobs'").fetchone():
+                unfinished = "conversation_id=? AND status IN ('queued','running','waiting_outline','waiting_storyboard','failed')"
+                connection.execute(
+                    f"INSERT INTO generation_events(job_id,event_type,message,created_at) SELECT id,'cancel',?,? FROM generation_jobs WHERE {unfinished}",
+                    ("对话已删除，未完成任务已取消；已保存内容保留。", now, conversation_id),
+                )
+                connection.execute(
+                    f"UPDATE generation_jobs SET status='cancelled',lease_id=NULL,lease_until=NULL,updated_at=? WHERE {unfinished}",
+                    (now, conversation_id),
+                )
+
     @staticmethod
     def _require_conversation(connection: sqlite3.Connection, conversation_id: str) -> None:
-        if connection.execute("SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)).fetchone() is None:
+        if connection.execute("SELECT 1 FROM conversations WHERE id = ? AND deleted_at IS NULL", (conversation_id,)).fetchone() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")

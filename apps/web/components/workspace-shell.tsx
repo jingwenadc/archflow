@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type PointerEvent } from "react";
 import {
   createConversation,
+  deleteConversation,
   getConversations,
   getMessages,
   getProjectFiles,
@@ -19,6 +20,7 @@ import { GenerationPanel } from "./generation-panel";
 import {
   ChevronLeft,
   ChevronRight,
+  CloseIcon,
   FileIcon,
   PlusIcon,
   SendIcon,
@@ -78,9 +80,13 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [creatingConversation, setCreatingConversation] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
+  const [deletingConversation, setDeletingConversation] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const deleteDialog = useRef<HTMLDialogElement>(null);
   const scopeKey = `${projectId}:${module.key}:${activeConversationId}`;
   const currentScope = useRef(scopeKey);
   currentScope.current = scopeKey;
@@ -91,6 +97,17 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
   useEffect(() => {
     if (followMessages.current && thread.current) thread.current.scrollTop = thread.current.scrollHeight;
   }, [messages, sendingMessage]);
+
+  useEffect(() => {
+    const dialog = deleteDialog.current;
+    if (!dialog) return;
+    if (deleteTarget) {
+      dialog.showModal();
+      dialog.querySelector<HTMLButtonElement>("[data-cancel-delete]")?.focus();
+    } else if (dialog.open) dialog.close();
+  }, [deleteTarget]);
+
+  useEffect(() => { setDeleteTarget(null); setDeleteError(null); }, [projectId, module.key]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("archflow-workspace");
@@ -280,6 +297,29 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
     }
   }
 
+  async function removeConversation() {
+    if (!deleteTarget || deletingConversation) return;
+    const target = deleteTarget;
+    const projectScope = `${projectId}:${module.key}:`;
+    setDeletingConversation(true);
+    setDeleteError(null);
+    try {
+      await deleteConversation(target.id, projectId);
+      if (!currentScope.current.startsWith(projectScope)) return;
+      const index = conversations.findIndex(item => item.id === target.id);
+      const remaining = conversations.filter(item => item.id !== target.id);
+      setConversations(remaining);
+      setActiveConversationId(current => current === target.id ? remaining[Math.min(index, remaining.length - 1)]?.id ?? null : current);
+      if (activeConversationId === target.id) { setDraft(""); pendingMessage.current = null; }
+      setDeleteTarget(null);
+      announce("对话已删除，项目资料已保留");
+    } catch (cause) {
+      if (currentScope.current.startsWith(projectScope)) setDeleteError(cause instanceof Error ? cause.message : "删除失败，请重试。");
+    } finally {
+      setDeletingConversation(false);
+    }
+  }
+
   async function addFiles(selected: FileList | File[]) {
     const scope = currentScope.current;
     for (const file of Array.from(selected)) {
@@ -387,21 +427,49 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
 
           <div className="conversation-tabs" role="tablist" aria-label={`${module.label}对话`}>
             {conversations.map((conversation) => (
-              <button
-                key={conversation.id}
-                className={activeConversationId === conversation.id ? "conversation-tab is-active" : "conversation-tab"}
-                type="button"
-                role="tab"
-                aria-selected={activeConversationId === conversation.id}
-                onClick={() => setActiveConversationId(conversation.id)}
-              >
-                <span>{conversation.title}</span>
-              </button>
+              <div key={conversation.id} className={activeConversationId === conversation.id ? "conversation-tab is-active" : "conversation-tab"}>
+                <button
+                  className="conversation-tab-select"
+                  type="button"
+                  role="tab"
+                  title={conversation.title}
+                  aria-selected={activeConversationId === conversation.id}
+                  onClick={() => setActiveConversationId(conversation.id)}
+                >
+                  <span>{conversation.title}</span>
+                </button>
+                <button
+                  className="conversation-tab-close"
+                  type="button"
+                  aria-label={`删除对话：${conversation.title}`}
+                  title="删除对话"
+                  disabled={deletingConversation || sendingMessage}
+                  onClick={() => { setDeleteError(null); setDeleteTarget(conversation); }}
+                ><CloseIcon /></button>
+              </div>
             ))}
             <button className="new-conversation" type="button" disabled={creatingConversation} onClick={() => void addConversation()}>
               <PlusIcon /><span>{creatingConversation ? "创建中…" : "新建对话"}</span>
             </button>
           </div>
+
+          <dialog
+            className="delete-conversation-dialog"
+            ref={deleteDialog}
+            aria-labelledby="delete-conversation-title"
+            aria-describedby="delete-conversation-description"
+            onCancel={event => { if (deletingConversation) event.preventDefault(); }}
+            onClose={() => setDeleteTarget(null)}
+          >
+            <h2 id="delete-conversation-title">删除这个对话？</h2>
+            <p className="delete-conversation-name">{deleteTarget?.title}</p>
+            <p id="delete-conversation-description">此对话将从标签栏移除，未完成的生成任务会取消。聊天与历史成果保留在后台，项目资料不受影响。已发送的模型请求可能仍会计费。</p>
+            {deleteError && <p className="generation-error" role="alert">{deleteError}</p>}
+            <div className="delete-conversation-actions">
+              <button type="button" data-cancel-delete disabled={deletingConversation} onClick={() => setDeleteTarget(null)}>取消</button>
+              <button type="button" className="delete-confirm" disabled={deletingConversation} onClick={() => void removeConversation()}>{deletingConversation ? "正在删除…" : "删除对话"}</button>
+            </div>
+          </dialog>
 
           <div className="conversation-heading">
             <div>

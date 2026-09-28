@@ -236,6 +236,23 @@ a { color: inherit; text-decoration: none; }
 .conversation-tab, .new-conversation { height: 39px; display: inline-flex; align-items: center; gap: 8px; padding: 0 13px; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; white-space: nowrap; }
 .conversation-tab:hover { color: var(--ink); background: rgb(255 255 255 / 0.55); }
 .conversation-tab.is-active { border-color: var(--line); background: var(--paper); color: var(--ink); box-shadow: inset 0 2px var(--blue); }
+.conversation-tab { flex-shrink: 0; gap: 0; padding: 0 4px 0 0; }
+.conversation-tab-select { height: 100%; max-width: 220px; padding: 0 10px 0 13px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.conversation-tab-select span { display: block; overflow: hidden; text-overflow: ellipsis; }
+.conversation-tab-close { width: 26px; height: 26px; display: grid; place-items: center; padding: 5px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
+.conversation-tab-close svg { width: 14px; height: 14px; }
+.conversation-tab-close:hover { background: #e7dedd; color: #9e3935; }
+.conversation-tab-close:disabled { opacity: .4; cursor: not-allowed; }
+.conversation-tab-select:focus-visible, .conversation-tab-close:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.delete-conversation-dialog { width: min(440px, calc(100vw - 32px)); padding: 26px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); color: var(--ink); box-shadow: var(--shadow); }
+.delete-conversation-dialog::backdrop { background: rgb(16 43 60 / .3); }
+.delete-conversation-dialog h2 { margin: 0 0 12px; font-size: 19px; }
+.delete-conversation-dialog p { margin: 10px 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.delete-conversation-dialog .delete-conversation-name { font-weight: 650; }
+.delete-conversation-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.delete-conversation-actions button { padding: 9px 16px; border: 1px solid var(--line-strong); border-radius: 6px; background: white; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.delete-conversation-actions .delete-confirm { background: #a13f37; border-color: #a13f37; color: white; }
+.delete-conversation-actions button:disabled { opacity: .5; cursor: wait; }
 .conversation-tab i { padding: 2px 4px; border-radius: 2px; background: var(--navy-soft); color: var(--navy); font-size: 9px; font-style: normal; }
 .new-conversation { border-radius: 4px; }
 .new-conversation svg { width: 16px; }

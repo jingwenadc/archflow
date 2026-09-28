@@ -1,7 +1,7 @@
 import json
 from uuid import uuid4
 from typing import Literal
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -67,7 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=list(resolved.allowed_origins),
         allow_credentials=True,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["*"],
     )
 
@@ -108,6 +108,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def create_conversation(request: ConversationCreate) -> ConversationRecord:
         projects.get(request.project_id)
         return conversations.create(request)
+
+    @app.delete("/api/v1/conversations/{conversation_id}", status_code=204)
+    def delete_conversation(conversation_id: str, project_id: str) -> Response:
+        projects.get(project_id)
+        conversations.delete(conversation_id, project_id)
+        return Response(status_code=204)
 
     @app.get("/api/v1/conversations/{conversation_id}/messages", response_model=list[MessageRecord])
     def list_messages(conversation_id: str) -> list[MessageRecord]:

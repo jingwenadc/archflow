@@ -93,7 +93,7 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     const error = await response.json().catch(() => null);
     throw new Error(error?.detail ?? "请求失败，请稍后重试。");
   }
-  return response.json() as Promise<T>;
+  return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }
 
 export function jobDownloadUrl(id: string) {
@@ -122,6 +122,10 @@ export function createConversation(projectId: string, module: Conversation["modu
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ project_id: projectId, module, title }),
   });
+}
+
+export function deleteConversation(conversationId: string, projectId: string) {
+  return apiRequest<void>(`/api/v1/conversations/${encodeURIComponent(conversationId)}?project_id=${encodeURIComponent(projectId)}`, { method: "DELETE" });
 }
 
 export function getMessages(conversationId: string) {

@@ -148,6 +148,12 @@ class JobRepository:
                 if previous["request_hash"] != fingerprint:
                     raise HTTPException(409, "Idempotency key was already used for a different request.")
                 return self.detail(previous["id"])
+            # Recheck inside the write transaction: deletion can race the HTTP validation.
+            if request.conversation_id and not db.execute(
+                "SELECT 1 FROM conversations WHERE id=? AND project_id=? AND module=? AND deleted_at IS NULL",
+                (request.conversation_id, request.project_id, request.module),
+            ).fetchone():
+                raise HTTPException(404, "Conversation not found in this project and module.")
             job_id = str(uuid4())
             values = request.model_dump() | {
                 "id": job_id, "model": model, "review_model": review_model,
