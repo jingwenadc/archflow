@@ -9,12 +9,14 @@ const conversation = { id: "review-thread", project_id: project.id, module: "con
 let tick = 1;
 const timestamp = () => new Date(Date.UTC(2026, 8, 29, 1, 0, tick++)).toISOString();
 const messages = [{ id: "m1", conversation_id: conversation.id, role: "user", content: "制作学校改造汇报", created_at: timestamp() }];
+const fileId = "11111111-2222-4333-8444-555555555555";
+const filename = "设计任务书.pdf";
 function makeJob(id, status, stage) {
   const date = timestamp();
   return { id, project_id: project.id, conversation_id: conversation.id, module: "concept", goal: messages[0].content, target_units: 8, batch_size: 5, max_revision_rounds: 2,
     status, stage, completed_units: status === "completed" ? 8 : 0, storyboard_units: status === "completed" ? 8 : 0, max_model_calls: 20000, max_total_tokens: 100000000,
     model_calls: 0, total_tokens: 0, model: "mock", review_model: "mock", created_at: date, updated_at: date, batches: [], error: null,
-    outline: { target_units: 8, skill_slug: "mock", summary: "项目设计摘要", sections: [{ title: "校园功能与流线", start_unit: 1, end_unit: 4, objective: "保留这段场地分析，强调学生与后勤流线分离。" }, { title: "实施策略", start_unit: 5, end_unit: 8, objective: "分期实施，保留其他内容。" }] } };
+    outline: { target_units: 8, skill_slug: "mock", summary: `项目设计摘要。证据：${fileId}:page1、page3、page6。`, sections: [{ title: "校园功能与流线", start_unit: 1, end_unit: 4, objective: "保留这段场地分析，强调学生与后勤流线分离。" }, { title: "实施策略", start_unit: 5, end_unit: 8, objective: "分期实施，保留其他内容。" }] } };
 }
 const jobs = [makeJob("v1", "completed", "final_review"), makeJob("v2", "waiting_outline", "planning")];
 const comments = { v1: [], v2: [] };
@@ -32,6 +34,7 @@ await context.route(/\/api\/v1\//, async route => {
     if (path === "/api/v1/capabilities") return reply({ generation: true });
     if (path === "/api/v1/settings/run-limits") return reply({ max_model_calls: 20000, max_total_tokens: 100000000 });
     if (path === "/api/v1/jobs") return reply([...jobs].reverse());
+    if (path.endsWith("/source-citations")) return reply([{ file_id: fileId, name: filename, page_count: 9 }]);
     if (path.endsWith("/comments")) return reply(comments[id] ?? []);
     if (path.endsWith("/units")) return reply(id === "v1" ? units.slice(Number(url.searchParams.get("offset")), Number(url.searchParams.get("offset")) + 5) : []);
     if (path.endsWith("/export")) return reply(id === "v1" ? { status: "ready", requested: true, result: { page_count: 8, format: "pptx", missing_facts: 0 } } : { status: "not_requested", requested: false, result: null });
@@ -73,6 +76,11 @@ try {
   await page.goto(base);
   console.log("Review preview loaded");
   await page.locator('[data-review-kind="outline"][data-review-index="1"] p').waitFor();
+  assert.match(await page.locator('[data-review-kind="outline"][data-review-index="0"]').innerText(), /《设计任务书\.pdf》第 1、3、6 页/);
+  await selectText('[data-review-kind="outline"][data-review-index="0"]');
+  await page.getByRole("textbox", { name: "批注意见", exact: true }).fill("请核对这三页的项目条件。");
+  await page.getByRole("button", { name: "加入本次反馈", exact: true }).click();
+  assert.match(comments.v2[0].anchor.quote, /《设计任务书\.pdf》第 1、3、6 页/);
   await selectText('[data-review-kind="outline"][data-review-index="1"] p');
   await page.getByRole("textbox", { name: "批注意见", exact: true }).fill("用两种颜色区分学生与后勤流线。");
   assert.equal(await page.locator("#output-version").isDisabled(), true);
@@ -89,12 +97,12 @@ try {
   const request = writes.find(item => item.path.endsWith("/feedback"));
   assert.equal(request.path, "/api/v1/jobs/v2/feedback");
   assert.equal(request.body.overall, "整体减少背景介绍，保留实施策略。");
-  assert.deepEqual(request.body.comment_ids, ["c1"]);
-  assert.equal(comments.v2[0].anchor.unit_index, 1);
-  assert.equal(comments.v2[0].anchor.quote, "保留这段场地分析，强调学生与后勤流线分离。");
+  assert.deepEqual(request.body.comment_ids, ["c1", "c2"]);
+  assert.equal(comments.v2[1].anchor.unit_index, 1);
+  assert.equal(comments.v2[1].anchor.quote, "保留这段场地分析，强调学生与后勤流线分离。");
   assert.equal(await page.locator("#output-version").inputValue(), "v2", "A revision must preserve the original preview");
   await page.reload();
-  await page.locator('[data-job-id="v2"]').getByText("已提交反馈 · 2 条").waitFor();
+  await page.locator('[data-job-id="v2"]').getByText("已提交反馈 · 3 条").waitFor();
   const before = writes.length;
   await page.locator("#output-version").selectOption("v1");
   await page.getByRole("button", { name: "文字审阅与批注", exact: true }).click();

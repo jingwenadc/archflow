@@ -95,6 +95,12 @@ def job_routers(settings: Settings, projects: ProjectRepository,
     def get_job(job_id: str) -> GenerationJobDetail:
         return jobs.detail(job_id)
 
+    @public.get("/{job_id}/source-citations")
+    def source_citations(job_id: str) -> list[dict]:
+        jobs.detail(job_id)
+        return [{"file_id": source["file_id"], "name": source["name"], "page_count": source["page_count"]}
+                for source in documents.catalog(job_id)]
+
     @public.get("/{job_id}/units", response_model=list[ArtifactUnit])
     def get_units(job_id: str, kind: Literal["storyboard", "draft"] = "draft",
                   offset: int = Query(0, ge=0), limit: int = Query(10, ge=1, le=20)) -> list[ArtifactUnit]:

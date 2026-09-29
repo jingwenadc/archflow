@@ -5,6 +5,8 @@ import { apiRequest } from "@/lib/api";
 import type { ArtifactKind, ArtifactUnit, CommentAnchor, GenerationJobDetail, GenerationJobRecord } from "@/lib/job-contracts";
 import { jobStatuses, orderedJobs, workflowState } from "@/lib/workflow";
 import { useReviews } from "./review-controls";
+import { displayCitations } from "@/lib/source-citations";
+import { useCitationSources } from "@/lib/use-citation-sources";
 
 type ExportState = { status: string; requested: boolean; error: string | null; result: { page_count: number; format: string; missing_facts: number } | null };
 const url = (path: string) => `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}${path}`;
@@ -34,6 +36,8 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
   const selection = useRef(selectedId);
   selection.current = selectedId;
   const versions = orderedJobs(jobs);
+  const citations = useCitationSources(selectedId);
+  const show = (text: string) => displayCitations(text, citations?.sources ?? []);
   const current = jobs.find(job => job.id === selectedId);
   const latest = versions.at(-1);
   const version = versions.findIndex(job => job.id === selectedId) + 1;
@@ -121,11 +125,12 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
     </div>}
     <div className="generation-panel output-only">
       {error && <p className="generation-error" role="status">{error}</p>}
-      {!selectedId ? <p className="generation-note">提纲与成果会显示在这里。请从中间的项目对话开始。</p> : !detail ? <p role="status">正在读取 V{version} 成果…</p> : <>
+      {!selectedId ? <p className="generation-note">提纲与成果会显示在这里。请从中间的项目对话开始。</p> : !detail || !citations ? <p role="status">正在读取 V{version} 成果与来源文件名…</p> : <>
+        {citations.error && <p role="alert" className="generation-error">来源文件名暂时无法读取，引用仍显示原始编号。{citations.error}</p>}
         {!detail.outline && <div className="output-empty"><strong>{workflowState(detail).label}</strong><p className="generation-note">提纲准备好后会显示在这里，确认操作在对话中。</p>{versions.some(item => item.id !== selectedId) && <p className="generation-note">也可以从上方选择已有版本继续查看。</p>}</div>}
         {detail.scope_mismatch && <p className="generation-error">此旧版本的提纲与交付数量需要重新确认；保留原成果供参考，不应按此范围继续生成。</p>}
         <div ref={contentRoot} onPointerUp={captureSelection} onKeyUp={captureSelection}>
-        {detail.outline && <details open={!exported?.result}><summary>章节提纲 · V{version}</summary><p className="generation-note">{detail.outline.sections.length} 个{detail.module === "concept" ? "章节" : "分组"} · 已确认交付 {detail.target_units} {detail.module === "concept" ? "页" : "章"}</p><p data-review-kind="outline" data-review-index={0}>{detail.outline.summary}</p><ol>{detail.outline.sections.map((section, index) => <li key={section.start_unit} data-review-kind="outline" data-review-index={index + 1}><strong><span data-review-exclude>第{section.start_unit === section.end_unit ? section.start_unit : `${section.start_unit}–${section.end_unit}`}{detail.module === "concept" ? "页" : "章"} · </span>{section.title}</strong>{"\n"}<p>{section.objective}</p></li>)}</ol></details>}
+        {detail.outline && <details open={!exported?.result}><summary>章节提纲 · V{version}</summary><p className="generation-note">{detail.outline.sections.length} 个{detail.module === "concept" ? "章节" : "分组"} · 已确认交付 {detail.target_units} {detail.module === "concept" ? "页" : "章"}</p><p data-review-kind="outline" data-review-index={0}>{show(detail.outline.summary)}</p><ol>{detail.outline.sections.map((section, index) => <li key={section.start_unit} data-review-kind="outline" data-review-index={index + 1}><strong><span data-review-exclude>第{section.start_unit === section.end_unit ? section.start_unit : `${section.start_unit}–${section.end_unit}`}{detail.module === "concept" ? "页" : "章"} · </span>{show(section.title)}</strong>{"\n"}<p>{show(section.objective)}</p></li>)}</ol></details>}
         {exported?.requested && ["queued", "processing"].includes(exported.status) && <p role="status">正在排版和渲染可编辑文件…</p>}
         {exported?.status === "failed" && <div role="alert"><p>{exported.error}</p><button onClick={() => void requestExport(`/api/v1/jobs/${selectedId}/export/retry`)}>重试排版</button></div>}
         {["completed", "needs_review"].includes(detail.status) && exported && !exported.requested && <button onClick={() => void requestExport(`/api/v1/jobs/${selectedId}/export`)}>排版为可编辑审阅文件</button>}
@@ -138,7 +143,7 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
         </>}
         {(exported?.status !== "ready" || textView) && <>
           {detail.storyboard_units > 0 && ["generating", "final_review"].includes(detail.stage) && <label className="artifact-text-kind">审阅内容<select aria-label="审阅内容" value={kind} disabled={editing} onChange={event => { setTextKind(event.target.value as "storyboard" | "draft"); setPage(0); }}><option value="draft">正文</option><option value="storyboard">内容策划</option></select></label>}
-          {units.map(unit => <article className="generation-unit" key={unit.unit_index}><p className="eyebrow">{kind === "storyboard" ? detail.module === "concept" ? "逐页策划" : "逐章策划" : "内容草稿"} · {unit.unit_index}</p><div data-review-kind={kind} data-review-index={unit.unit_index}><h3>{unit.title}</h3>{"\n"}<p className="generation-body">{unit.body}</p></div>{unit.missing_facts.length > 0 && <p className="generation-error">待确认：{unit.missing_facts.join("；")}</p>}</article>)}
+          {units.map(unit => <article className="generation-unit" key={unit.unit_index}><p className="eyebrow">{kind === "storyboard" ? detail.module === "concept" ? "逐页策划" : "逐章策划" : "内容草稿"} · {unit.unit_index}</p><div data-review-kind={kind} data-review-index={unit.unit_index}><h3>{show(unit.title)}</h3>{"\n"}<p className="generation-body">{show(unit.body)}</p></div>{unit.missing_facts.length > 0 && <p className="generation-error">待确认：{unit.missing_facts.map(show).join("；")}</p>}</article>)}
           {units.length > 0 && <div className="generation-actions"><button disabled={page === 0 || editing} onClick={() => setPage(value => value - 1)}>上一组</button><span>第 {page * 5 + 1} {detail.module === "concept" ? "页" : "章"}起</span><button disabled={(page + 1) * 5 >= detail.target_units || editing} onClick={() => setPage(value => value + 1)}>下一组</button></div>}
         </>}
         </div>

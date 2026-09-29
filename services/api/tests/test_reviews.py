@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from archflow_api.config import Settings
+from archflow_api.citations import display_citations
 from archflow_api.job_repository import JobRepository
 from archflow_api.main import create_app
 from archflow_api.models import JobCheckpoint, ReviewResult
@@ -55,6 +56,30 @@ def test_saving_comments_is_inert_persistent_and_idempotent(env):
     assert restored.detail(job.id).model_calls == 0
     assert len(restored.list(job.project_id)) == 1
     assert client.get(f"/api/v1/jobs/{job.id}/comments").json()[0]["anchor"]["quote"] == "仅使用确认资料"
+
+
+def test_frozen_filename_citations_and_displayed_text_remain_annotatable(env):
+    client, repo, job = env
+    file_id = str(uuid4())
+    source = {"file_id": file_id, "name": "设计任务书.pdf", "role": "source", "page_count": 9,
+              "directory": "/unused", "pages": [], "assets": [], "theme": {}}
+    with repo.connect() as db:
+        db.execute("UPDATE job_sources SET payload=? WHERE job_id=?", (json.dumps([source]), job.id))
+    save_plan(repo, repo.claim())
+    with repo.connect() as db:
+        outline = json.loads(db.execute("SELECT outline FROM generation_jobs WHERE id=?", (job.id,)).fetchone()[0])
+        outline["summary"] = f"证据：{file_id}:page1、page3、page6。"
+        db.execute("UPDATE generation_jobs SET outline=? WHERE id=?", (json.dumps(outline), job.id))
+    sources = client.get(f"/api/v1/jobs/{job.id}/source-citations").json()
+    assert sources == [{"file_id": file_id, "name": "设计任务书.pdf", "page_count": 9}]
+    assert "directory" not in sources[0]
+    readable = display_citations(outline["summary"], [source])
+    assert readable == "证据：《设计任务书.pdf》第 1、3、6 页。"
+    saved = comment(client, job, index=0, quote="《设计任务书.pdf》第 1、3、6 页").json()
+    assert saved["anchor"]["quote"] == "《设计任务书.pdf》第 1、3、6 页"
+    child = feedback(client, job, comment_ids=[saved["id"]]).json()
+    assert child["feedback_kind"] == "outline"
+    assert client.get(f"/api/v1/jobs/{child['id']}/source-citations").json() == sources
 
 
 def test_single_submission_freezes_overall_and_inline_and_retains_scope(env):

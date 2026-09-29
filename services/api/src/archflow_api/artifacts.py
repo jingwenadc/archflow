@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from .materials import DocumentRepository
+from .citations import display_citations
 
 
 def queue_export(job, jobs, projects, documents: DocumentRepository) -> dict:
@@ -15,8 +16,13 @@ def queue_export(job, jobs, projects, documents: DocumentRepository) -> dict:
         raise HTTPException(409, "尚无已生成的页面。")
     folder = projects.root / job.project_id / "workspace" / "versions" / job.id
     folder.mkdir(parents=True, exist_ok=True)
-    request = {"title": job.outline.summary[:80] if job.outline else job.goal[:80], "module": job.module,
-               "units": [unit.model_dump() for unit in units], "sources": documents.sources(job.id)}
+    sources = documents.sources(job.id)
+    rendered_units = [unit.model_dump() for unit in units]
+    for unit in rendered_units:
+        unit["title"] = display_citations(unit["title"], sources)
+        unit["body"] = display_citations(unit["body"], sources)
+    request = {"title": display_citations(job.outline.summary[:80] if job.outline else job.goal[:80], sources), "module": job.module,
+               "units": rendered_units, "sources": sources}
     path = folder / "input.json"
     if not path.exists():
         path.write_text(json.dumps(request, ensure_ascii=False), "utf-8")

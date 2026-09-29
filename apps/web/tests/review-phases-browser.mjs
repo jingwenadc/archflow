@@ -37,6 +37,7 @@ try {
           if (path === "/api/v1/capabilities") return reply({ generation: true });
           if (path === "/api/v1/settings/run-limits") return reply({ max_model_calls: 20000, max_total_tokens: 100000000 });
           if (path === "/api/v1/jobs") return reply([...jobs].reverse());
+          if (path.endsWith("/source-citations")) return reply([]);
           if (path.endsWith("/comments")) return reply(comments[id] ?? []);
           if (path.endsWith("/units")) return reply(phase.kind === "outline" ? [] : units.slice(0, 5));
           if (path.endsWith("/export")) return reply({ status: "not_requested", requested: false, result: null });

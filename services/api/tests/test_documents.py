@@ -1,11 +1,14 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 
 from archflow_api.materials import DocumentRepository, collect_materials
+from archflow_api.citations import display_citations
+from archflow_api.artifacts import queue_export
 from archflow_api.models import MessageCreate, ConversationCreate, JobCheckpoint, ReviewResult
 from archflow_api.conversation_repository import ConversationRepository
 from test_jobs import create, ready, unit_batch, SKILLS
@@ -60,6 +63,31 @@ def test_frozen_sources_and_image_boundaries(tmp_path):
     with pytest.raises(HTTPException, match="404"):
         repo.asset("another-project", "file:image")
     assert "directory" not in repo.catalog("one")[0]
+
+
+def test_export_renders_readable_citations_without_changing_stored_evidence(tmp_path):
+    repo = JobRepository(tmp_path / "db")
+    job = create(repo, 1)
+    file_id = str(uuid4())
+    source = {"file_id": file_id, "name": "设计任务书.pdf", "role": "source", "page_count": 1,
+              "directory": str(tmp_path), "pages": [{"id": f"{file_id}:p1", "page": 1, "text": "规划依据"}], "assets": [], "theme": {}}
+    with repo.connect() as db:
+        db.execute("UPDATE job_sources SET payload=? WHERE job_id=?", (json.dumps([source]), job.id))
+    claim = ready(repo, job)
+    batch = unit_batch(1, 1)
+    batch.units[0].body = f"证据：{file_id}:page1。"
+    batch.units[0].evidence = [f"{file_id}:p1"]
+    passed = ReviewResult(passed=True, summary="通过", issues=[])
+    repo.checkpoint(job.id, claim.lease_id, JobCheckpoint(action="draft", batch=batch))
+    repo.checkpoint(job.id, claim.lease_id, JobCheckpoint(action="review", review=passed))
+    repo.checkpoint(job.id, claim.lease_id, JobCheckpoint(action="final_review", review=passed))
+    documents = DocumentRepository(repo.path)
+    queue_export(repo.detail(job.id), repo, SimpleNamespace(root=tmp_path), documents)
+    request = json.loads((tmp_path / job.project_id / "workspace" / "versions" / job.id / "input.json").read_text())
+    assert request["units"][0]["body"] == "证据：《设计任务书.pdf》第 1 页。"
+    assert request["units"][0]["evidence"] == [f"{file_id}:p1"]
+    assert repo.units(job.id, "draft", 0, 1)[0].body == f"证据：{file_id}:page1。"
+    assert display_citations(f"{file_id}:p1–p3", [source]) == "《设计任务书.pdf》第 1–3 页"
 
 
 def test_material_requires_ready_or_explicit_exclusion(tmp_path):

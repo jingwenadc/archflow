@@ -3,6 +3,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { apiRequest } from "@/lib/api";
 import type { ArtifactKind, CommentAnchor, GenerationJobDetail, GenerationJobRecord, ReviewComment } from "@/lib/job-contracts";
+import { displayCitations } from "@/lib/source-citations";
+import { useCitationSources } from "@/lib/use-citation-sources";
 
 export const reviewLabels: Record<ArtifactKind, string> = { outline: "提纲", storyboard: "内容策划", draft: "正文" };
 type ReviewState = { comments?: ReviewComment[]; error?: string };
@@ -89,6 +91,8 @@ export function ReviewEditor({ job, version, current, approveAction, cancelActio
   const [overall, setOverall] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const [expanded, setExpanded] = useState(reviewReady);
+  const citationSources = useCitationSources(current || expanded || pending.length > 0 || submitted.length > 0 ? job.id : null);
+  const show = (text: string) => citationSources ? displayCitations(text, citationSources.sources) : "正在读取来源文件名…";
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
   const [sent, setSent] = useState(false);
@@ -131,7 +135,7 @@ export function ReviewEditor({ job, version, current, approveAction, cancelActio
       <label className="requirement-editor">整体意见<textarea aria-label={`V${version} 整体意见`} placeholder="例如：保留结构，突出设计构思，减少背景介绍。可与右侧批注一起提交。" rows={3} maxLength={4000} value={overall} disabled={reviews.submitting !== null} onChange={event => setOverall(event.target.value)} /></label>
       {pending.map(comment => <div className="review-comment" key={comment.id}>
         <div className="review-comment-heading"><strong>{reviewLabels[comment.kind]} · {comment.anchor?.unit_index === 0 ? "摘要" : `位置 ${comment.anchor?.unit_index}`}</strong><button aria-label="移除批注" disabled={removing || reviews.submitting !== null} onClick={async () => { setRemoving(true); setError(null); try { await reviews.remove(job.id, comment.id); } catch (cause) { setError(cause instanceof Error ? cause.message : "无法移除批注"); } finally { setRemoving(false); } }}>移除</button></div>
-        {comment.anchor && <blockquote>{comment.anchor.quote}</blockquote>}<p>{comment.body}</p>
+        {comment.anchor && <blockquote>{show(comment.anchor.quote)}</blockquote>}<p>{comment.body}</p>
       </div>)}
       <p className="generation-note">右侧选中文字可添加批注；与整体意见一次提交，保存为新版本。涉及多个阶段时从最早阶段修订，仍需重新确认。</p>
       {reviews.blocked && <p className="generation-note">当前任务仍在执行，可以先记录批注；结束或暂停后再提交修订。</p>}
@@ -141,6 +145,6 @@ export function ReviewEditor({ job, version, current, approveAction, cancelActio
       <button className="review-submit" disabled={!hydrated || !state?.comments || !!state.error || (!overall.trim() && !pending.length) || pending.length > 100 || reviews.blocked || reviews.annotationEditing || reviews.submitting !== null || removing || !!job.scope_mismatch} onClick={() => void submit()}>{reviews.submitting === job.id ? "正在提交反馈…" : "提交反馈，生成修订稿"}</button>
       {sent && <p role="status">反馈已提交，修订任务已创建；原版本保留。</p>}
     </div>}
-    {submitted.length > 0 && <details><summary>已提交反馈 · {submitted.length} 条</summary>{submitted.map(comment => <div className="review-comment" key={comment.id}><strong>{reviewLabels[comment.kind]}</strong>{comment.anchor && <blockquote>{comment.anchor.quote}</blockquote>}<p>{comment.body}</p></div>)}</details>}
+    {submitted.length > 0 && <details><summary>已提交反馈 · {submitted.length} 条</summary>{submitted.map(comment => <div className="review-comment" key={comment.id}><strong>{reviewLabels[comment.kind]}</strong>{comment.anchor && <blockquote>{show(comment.anchor.quote)}</blockquote>}<p>{comment.body}</p></div>)}</details>}
   </div>;
 }

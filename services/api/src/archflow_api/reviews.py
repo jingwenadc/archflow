@@ -9,6 +9,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from .models import CommentAnchor, DocumentPlan, ReviewComment, ReviewCommentCreate, ReviewSnapshot, ReviewSubmission
+from .citations import display_citations
 
 
 def normalized_text(value: str) -> str:
@@ -64,7 +65,9 @@ class Reviews:
             unit = json.loads(row[0])
             text = unit["title"] + "\n" + unit["body"]
         text = normalized_text(text)
-        if not normalized_text(anchor.quote) or normalized_text(anchor.quote) not in text:
+        source_row = db.execute("SELECT payload FROM job_sources WHERE job_id=?", (job["id"],)).fetchone()
+        display_text = display_citations(text, json.loads(source_row[0])) if source_row else text
+        if not normalized_text(anchor.quote) or not any(normalized_text(anchor.quote) in candidate for candidate in (text, display_text)):
             raise HTTPException(409, "选中的文字不属于此版本，或内容已经改变。请重新选择后批注。")
         return hashlib.sha256(text.encode()).hexdigest()
 
