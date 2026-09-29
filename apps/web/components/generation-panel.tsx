@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { apiRequest, jobDownloadUrl, type Message } from "@/lib/api";
 import type { GenerationJobCreate, GenerationJobDetail, GenerationJobRecord, ResolvedRequirement } from "@/lib/job-contracts";
 import { conversationTimeline, failureHelp, isActiveJob, jobStatuses, orderedJobs, requirementBrief } from "@/lib/workflow";
+import { normalizeIntegerInput, parseIntegerInput } from "@/lib/integer-input";
 import { ConversationMessage } from "./conversation-message";
 import { OutputPreview } from "./output-preview";
 import { WorkflowProgress } from "./workflow-progress";
@@ -17,7 +18,8 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
   const [enabled, setEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [goal, setGoal] = useState("");
-  const [count, setCount] = useState(10);
+  const [countDraft, setCountDraft] = useState("10");
+  const count = parseIntegerInput(countDraft, 1, 500);
   const [job, setJob] = useState<GenerationJobDetail | null>(null);
   const [jobs, setJobs] = useState<GenerationJobRecord[]>([]);
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -90,7 +92,7 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
     const timer = setTimeout(() => {
       void apiRequest<ResolvedRequirement>("/api/v1/requirements/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module, goal,
         base_goal: job?.scope_mismatch ? "" : job?.goal ?? "", fallback_units: job?.target_units ?? 10 }) })
-        .then(value => { if (!cancelled) { setCount(value.target_units); setResolution({ ...value, goal }); } })
+        .then(value => { if (!cancelled) { setCountDraft(String(value.target_units)); setResolution({ ...value, goal }); } })
         .catch(cause => { if (!cancelled) setError(cause instanceof Error ? cause.message : "无法整理需求，请重试。"); });
     }, 150);
     return () => { cancelled = true; clearTimeout(timer); };
@@ -129,7 +131,7 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
   }
 
   async function start() {
-    if (!conversationId || !goal.trim() || !limits || resolution?.goal !== goal) return;
+    if (!conversationId || !goal.trim() || !limits || resolution?.goal !== goal || count === null) return;
     const version = scope.current;
     if (isActiveJob(job) && !await perform(`/api/v1/jobs/${job!.id}/cancel`)) return;
     if (scope.current !== version) return;
@@ -176,7 +178,7 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
     </section>;
   }
 
-  const canStart = !loading && (!jobs.length || !!job) && !busy && !sendingMessage && enabled && materialsReady && !generating && !!limits && resolution?.goal === goal && !!goal.trim() && goal.length <= 20000 && Number.isInteger(count) && count >= 1 && count <= 500;
+  const canStart = !loading && (!jobs.length || !!job) && !busy && !sendingMessage && enabled && materialsReady && !generating && !!limits && resolution?.goal === goal && !!goal.trim() && goal.length <= 20000 && count !== null;
   return <>
     {module !== "drawing" && outputMount && createPortal(<OutputPreview jobs={jobs} selectedId={previewId} onSelect={selectPreview} onOutputAvailable={onOutputAvailable} />, outputMount)}
     {ready && conversationTimeline(messages, jobs).map(entry => entry.type === "message"
@@ -190,14 +192,14 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
       {job && <p className="generation-note">确认后保存为独立版本；原需求卡与成果保留，右侧预览不会自动切换。</p>}
       <label className="requirement-editor">编辑需求摘要<textarea aria-label="需求摘要" rows={3} value={goal} disabled={busy} onChange={event => { setGoal(event.target.value); setManualCount(false); requestKey.current = null; }} /></label>
       {goal.length > 20000 && <p role="alert">需求超过 20,000 字，请精简摘要；原始对话与资料仍保留，不会自动删除前面的要求。</p>}
-      <label>{module === "concept" ? "预计页数" : "内容章节数"}<input type="number" min={1} max={500} value={resolution?.goal === goal ? count : ""} placeholder="正在整理" disabled={busy || resolution?.goal !== goal} onChange={event => { setCount(Number(event.target.value)); setManualCount(true); requestKey.current = null; }} /></label>
+      <label>{module === "concept" ? "预计页数" : "内容章节数"}<input type="number" required min={1} max={500} value={resolution?.goal === goal ? countDraft : ""} placeholder={resolution?.goal === goal ? "输入数量" : "正在整理"} disabled={busy || resolution?.goal !== goal} onChange={event => { setCountDraft(event.target.value); setManualCount(true); requestKey.current = null; }} onBlur={() => setCountDraft(normalizeIntegerInput(countDraft))} /></label>
       {module === "bid" && <p className="generation-note">章节数不等于 Word 的物理页数；最终页数由排版结果确定。</p>}
       {resolution?.goal !== goal && <p className="generation-note" role="status">正在同步需求与交付数量…</p>}
-      {resolution?.goal === goal && resolution.requested_units !== null && resolution.requested_units !== count && <p className="generation-note">文字中提到 {resolution.requested_units} {module === "concept" ? "页" : "章"}；本次以此处确认的 {count} {module === "concept" ? "页" : "章"}为准。</p>}
-      {(!Number.isInteger(count) || count < 1 || count > 500) && <p role="alert">本次内容数量需在 1–500 之间。较长文档请拆分任务，不会自动缩减你的要求。</p>}
+      {resolution?.goal === goal && count !== null && resolution.requested_units !== null && resolution.requested_units !== count && <p className="generation-note">文字中提到 {resolution.requested_units} {module === "concept" ? "页" : "章"}；本次以此处确认的 {count} {module === "concept" ? "页" : "章"}为准。</p>}
+      {resolution?.goal === goal && countDraft !== "" && count === null && <p role="alert">本次内容数量需在 1–500 之间。较长文档请拆分任务，不会自动缩减你的要求。</p>}
       {!limits && <p className="generation-note">运行设置尚未读取，<button onClick={openSettings}>打开运行设置</button>检查连接。</p>}
-      {job && ["completed", "needs_review"].includes(job.status) && <><label>基于 V{versions.length} 修改页码 / 内容单元<input value={revisionRange} disabled={busy} onChange={event => { setRevisionRange(event.target.value); requestKey.current = null; }} placeholder="例如 3-5" /></label><button disabled={!canStart || count !== job.target_units} onClick={revise}>确认范围，生成新版本</button>{count !== job.target_units && <p className="generation-note">局部修改保留原有 {job.target_units} 个内容单元；调整总数量请使用下方重新整理提纲。</p>}</>}
-      <button disabled={!canStart} onClick={() => void start()}>{busy ? "正在保存并创建版本…" : !job ? "确认需求，整理提纲" : `确认 ${count} ${module === "concept" ? "页" : "章"}需求，生成新版本提纲`}</button>
+      {job && ["completed", "needs_review"].includes(job.status) && <><label>基于 V{versions.length} 修改页码 / 内容单元<input value={revisionRange} disabled={busy} onChange={event => { setRevisionRange(event.target.value); requestKey.current = null; }} placeholder="例如 3-5" /></label><button disabled={!canStart || count !== job.target_units} onClick={revise}>确认范围，生成新版本</button>{count !== null && count !== job.target_units && <p className="generation-note">局部修改保留原有 {job.target_units} 个内容单元；调整总数量请使用下方重新整理提纲。</p>}</>}
+      <button disabled={!canStart} onClick={() => void start()}>{busy ? "正在保存并创建版本…" : !job ? "确认需求，整理提纲" : `确认 ${count ?? "—"} ${module === "concept" ? "页" : "章"}需求，生成新版本提纲`}</button>
       {generating && <p>当前版本正在执行，补充要求已保存。完成后可确认新版本，也可以先取消当前任务。</p>}
       {!enabled && <p>模型服务尚未启用，需求已保存。管理员配置后可以继续。</p>}
       {!materialsReady && <p>项目资料仍在解析，或有文件失败。请在左侧等待、重试或排除失败文件。</p>}
