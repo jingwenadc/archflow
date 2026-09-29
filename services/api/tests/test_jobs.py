@@ -50,6 +50,8 @@ def test_hundred_units_complete_only_after_reviews(tmp_path, module):
         repo.checkpoint(job.id, claim.lease_id, JobCheckpoint(action="review", review=review))
     assert repo.detail(job.id).status == "running"
     assert repo.detail(job.id).completed_units == 100
+    assert repo.list(job.project_id)[0].completed_units == 100
+    assert repo.list(job.project_id)[0].storyboard_units == 100
     repo.checkpoint(job.id, claim.lease_id, JobCheckpoint(action="final_review", review=review))
     assert repo.detail(job.id).status == "completed"
     assert [unit.unit_index for unit in repo.units(job.id, "draft", 95, 5)] == list(range(96, 101))
@@ -155,3 +157,50 @@ def test_api_worker_auth_disable_and_download(tmp_path):
     assert client.get(f"/api/v1/jobs/{job['id']}/units?limit=100").status_code == 422
     disabled = TestClient(create_app(Settings(upload_dir=tmp_path / "uploads", project_dir=tmp_path / "projects", database_path=tmp_path / "db.sqlite3", repository_root=ROOT, allowed_origins=())))
     assert disabled.post("/api/v1/jobs", json=request).status_code == 503
+
+
+def test_conversation_history_keeps_all_confirmed_briefs(tmp_path):
+    from archflow_api.conversation_repository import ConversationRepository
+    from archflow_api.models import ConversationCreate
+
+    path = tmp_path / "history.sqlite3"
+    conversations = ConversationRepository(path)
+    conversation = conversations.create(ConversationCreate(project_id="one", module="concept", title="历史需求"))
+    repo = JobRepository(path)
+    first = None
+    for index in range(32):
+        job = repo.create(GenerationJobCreate(project_id="one", conversation_id=conversation.id, module="concept",
+            goal=f"已确认要求 {index}", target_units=10 if index == 0 else 40), str(uuid4()), SKILLS, "m", "r")
+        repo.control(job.id, "cancel")
+        first = first or job
+    # Listing history is read-only: it cannot change current jobs or requirements.
+    records = JobRepository(path).list("one", conversation.id)
+    assert len(records) == 32
+    assert records[-1].id == first.id
+    assert records[-1].goal == "已确认要求 0"
+    assert records[-1].target_units == 10
+    assert records[0].target_units == 40
+    assert all(record.status == "cancelled" for record in records)
+    assert len(repo.list("one")) == 30  # Project overview remains bounded.
+    assert repo.list("other", conversation.id) == []
+    assert repo.detail(first.id).goal == first.goal
+
+
+def test_revision_uses_the_newly_confirmed_budget(tmp_path):
+    settings = Settings(upload_dir=tmp_path / "uploads", project_dir=tmp_path / "projects", case_upload_dir=tmp_path / "cases",
+        database_path=tmp_path / "db", repository_root=ROOT, allowed_origins=(), worker_token="test", agent_enabled=True)
+    client = TestClient(create_app(settings))
+    repo = JobRepository(settings.database_path)
+    old = create(repo, 1, max_total_tokens=500000)
+    claim = ready(repo, old)
+    repo.checkpoint(old.id, claim.lease_id, JobCheckpoint(action="draft", batch=unit_batch(1, 1)))
+    passed = ReviewResult(passed=True, summary="通过", issues=[])
+    repo.checkpoint(old.id, claim.lease_id, JobCheckpoint(action="review", review=passed))
+    repo.checkpoint(old.id, claim.lease_id, JobCheckpoint(action="final_review", review=passed))
+    body = {"instruction": "修改配色", "units": [1], "max_model_calls": 100, "max_total_tokens": 200000}
+    response = client.post(f"/api/v1/jobs/{old.id}/revise", json=body)
+    assert response.status_code == 202
+    assert response.json()["max_total_tokens"] == 200000
+    assert response.json()["max_model_calls"] == 100
+    assert repo.detail(old.id).max_total_tokens == 500000
+    assert client.post(f"/api/v1/jobs/{old.id}/revise", json=body | {"max_total_tokens": True}).status_code == 422

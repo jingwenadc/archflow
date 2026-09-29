@@ -196,13 +196,22 @@ class JobRepository:
 
     def list(self, project_id: str, conversation_id: str | None = None) -> list[GenerationJobRecord]:
         with self.connect() as db:
-            sql = "SELECT id FROM generation_jobs WHERE project_id=?"
+            fields = [name for name in GenerationJobRecord.model_fields if name not in {"completed_units", "storyboard_units"}]
+            # History needs immutable briefs, not full plans, skills or page payloads.
+            sql = f"""SELECT {','.join('j.' + name for name in fields)},
+                COALESCE((SELECT SUM(end_unit-start_unit+1) FROM generation_batches b
+                    WHERE b.job_id=j.id AND b.status='completed'), 0) AS completed_units,
+                (SELECT COUNT(*) FROM generation_units u
+                    WHERE u.job_id=j.id AND u.kind='storyboard') AS storyboard_units
+                FROM generation_jobs j WHERE j.project_id=?"""
             args: list = [project_id]
             if conversation_id:
-                sql += " AND conversation_id=?"
+                sql += " AND j.conversation_id=?"
                 args.append(conversation_id)
-            rows = db.execute(sql + " ORDER BY created_at DESC LIMIT 30", args).fetchall()
-        return [GenerationJobRecord(**self.detail(row["id"]).model_dump()) for row in rows]
+            # Never silently drop confirmed cards after the thirtieth version.
+            sql += " ORDER BY j.created_at DESC, j.id DESC" + ("" if conversation_id else " LIMIT 30")
+            rows = db.execute(sql, args).fetchall()
+        return [GenerationJobRecord(**dict(row)) for row in rows]
 
     def units(self, job_id: str, kind: str, offset: int, limit: int) -> list[ArtifactUnit]:
         with self.connect() as db:

@@ -62,10 +62,14 @@ def job_routers(settings: Settings, projects: ProjectRepository,
             raise HTTPException(422, "请提供修改要求与有效页码范围。")
         if len(jobs.units(old.id, "draft", 0, 500)) != old.target_units:
             raise HTTPException(409, "原版本尚未生成完整内容，请先补齐或重新整理提纲。")
+        calls = request.get("max_model_calls", old.max_model_calls)
+        tokens = request.get("max_total_tokens", old.max_total_tokens)
+        if type(calls) is not int or not 1 <= calls <= 1000 or type(tokens) is not int or not 1000 <= tokens <= 10_000_000:
+            raise HTTPException(422, "请提供有效的模型调用与累计 token 上限。")
         body = GenerationJobCreate(project_id=old.project_id, conversation_id=old.conversation_id, module=old.module,
                                    goal=(old.goal[:15000] + "\n本次修改要求：" + instruction), target_units=old.target_units,
                                    batch_size=old.batch_size, max_revision_rounds=old.max_revision_rounds,
-                                   max_model_calls=old.max_model_calls, max_total_tokens=old.max_total_tokens)
+                                   max_model_calls=calls, max_total_tokens=tokens)
         created = jobs.create(body, idempotency_key or str(uuid4()), snapshot_skills(settings.repository_root), settings.llm_model, settings.review_model,
                               sources=documents.sources(old.id), parent_id=old.id, revision_units=sorted(set(indices)))
         return jobs.detail(created.id)

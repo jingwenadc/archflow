@@ -131,9 +131,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         elif current and current.status in {"queued", "running"}:
             reply = "已收到并保存补充要求。当前任务正在执行，使用的是启动时确认的资料和需求。完成后可据此生成新版本；也可以先取消当前任务。"
         elif current and current.status in {"waiting_outline", "waiting_storyboard"}:
-            reply = "已收到。你可以先查看提纲或逐页策划，再点击确认继续。如果需要调整，请用下方需求确认卡重新整理提纲；我不会把补充消息当作批准。"
+            reply = "已保存新的要求。请在下方确认新版本需求，再重新整理提纲；旧版需求与成果都会保留。右侧可独立切换成果版本，我不会把补充消息当作批准。"
         else:
-            reply = "已收到你的要求。项目资料会在这些对话中共享。我会先根据资料整理提纲，请在下方确认页数和需求；你可以继续聊天补充受众、风格或重点，无需重复上传。"
+            reply = "已收到你的要求。项目资料会在这些对话中共享。请先在下方确认需求摘要、页数与运行上限，确认后才会开始整理提纲；你也可以继续补充受众、风格或重点，无需重复上传。"
         conversations.assistant(conversation_id, reply, reply_to=message.id)
         return message
 

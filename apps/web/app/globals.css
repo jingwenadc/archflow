@@ -600,6 +600,18 @@ a { color: inherit; text-decoration: none; }
 .workflow-card label { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .workflow-card input { max-width: 120px; }
 .workflow-card textarea { width: 100%; resize: vertical; min-height: 100px; }
+.workflow-card .requirement-editor { display: grid; gap: 6px; }
+.workflow-card .requirement-editor textarea { min-width: 0; max-width: 100%; min-height: 100px; max-height: none; resize: vertical; }
+.requirement-card-heading { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.workflow-card .requirement-card-heading button { background: #fff; color: #315563; font-size: 12px; }
+.requirement-summary { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.confirmed-requirement details p { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 8px; }
+.workflow-task { border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 10px; }
+.output-preview { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.output-version-bar { position: sticky; top: 0; z-index: 1; background: #fff; display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.output-version-bar label { font-weight: 600; }
+.output-version-bar select { width: 100%; min-width: 0; border: 1px solid #ccd7dc; border-radius: 8px; background: #fff; padding: 10px; font: inherit; color: inherit; }
+.output-version-bar button { border: 0; background: none; color: #315563; cursor: pointer; font: inherit; text-decoration: underline; }
 .workflow-card progress { width: 100%; height: 6px; accent-color: #173b45; }
 .workflow-card details { color: #63757e; font-size: 12px; }
 .title-edit-button { font: inherit; font-weight: inherit; text-align: left; background: transparent; border: none; padding: 0; color: inherit; cursor: pointer; }
@@ -607,6 +619,6 @@ a { color: inherit; text-decoration: none; }
 .file-details a, .file-details button { display: inline-block; margin-top: 8px; margin-right: 8px; font-size: 11px; color: #315563; }
 .file-details button { background: transparent; border: none; padding: 0; cursor: pointer; }
 .artifact-page { display: block; width: 100%; height: auto; border: 1px solid #e3e7eb; background: #fff; }
-.output-panel > div:last-child { overflow-y: auto; min-height: 0; }
+.output-panel > div:last-child { overflow-y: auto; min-height: 0; flex: 1; }
 .composer-shell { grid-template-columns: 1fr auto; }
 .workflow-card button:focus-visible, .title-edit-button:focus-visible { outline: 2px solid #315563; outline-offset: 3px; }

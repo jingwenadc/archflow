@@ -489,24 +489,9 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
             ) : (
               <>
                 <div className="thread-date"><span>项目对话</span></div>
-                {messages.map((message) => message.role === "user" ? (
-                  <div className="message-row user-message" key={message.id}>
-                    <div className="message-bubble"><p>{message.content}</p></div>
-                    <span className="message-avatar user-avatar">我</span>
-                  </div>
-                ) : (
-                  <div className="message-row assistant-message" key={message.id}>
-                    <span className="message-avatar archflow-avatar">AF</span>
-                    <div className="message-stack">
-                      <div className="message-bubble"><p>{message.content}</p></div>
-                      <span className="message-meta">ArchFlow</span>
-                    </div>
-                  </div>
-                ))}
               </>
             )}
-            {sendingMessage && <div className="message-row assistant-message" role="status"><span className="message-avatar archflow-avatar">AF</span><p>正在保存并接收你的要求…</p></div>}
-            <GenerationPanel projectId={projectId} conversationId={activeConversationId} module={module.key} messages={messages} outputMount={outputMount} onOutputAvailable={() => setRightCollapsed(false)} materialsReady={files.every(file => file.role === "excluded" || (file.status === "ready" && file.processing === "ready"))} />
+            <GenerationPanel key={scopeKey} projectId={projectId} conversationId={activeConversationId} module={module.key} messages={messages.filter(message => message.conversation_id === activeConversationId)} outputMount={outputMount} onOutputAvailable={() => setRightCollapsed(false)} ready={!loadingConversations && !loadingMessages} sendingMessage={sendingMessage} materialsReady={files.every(file => file.role === "excluded" || (file.status === "ready" && file.processing === "ready"))} />
           </div>
 
           <div className="composer-area">
@@ -539,9 +524,9 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
                 <button className="icon-button" type="button" onClick={() => setRightCollapsed(true)} aria-label="收起成果预览"><ChevronRight /></button>
               </div>
 
-              <div ref={setOutputMount} />
             </>
           )}
+          <div ref={setOutputMount} hidden={rightCollapsed} />
         </aside>
       </main>
 
