@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from archflow_api.config import Settings
 from archflow_api.job_repository import JobRepository, snapshot_skills
 from archflow_api.main import create_app
-from archflow_api.models import ArtifactUnit, DocumentPlan, GenerationJobCreate, JobCheckpoint, PlanSection, ReviewResult, UnitBatch, UsageRecord
+from archflow_api.models import AgentMemory, ArtifactUnit, DocumentPlan, GenerationJobCreate, JobCheckpoint, PlanSection, ReviewResult, UnitBatch, UsageRecord, WorkerProgress
 
 ROOT = Path(__file__).resolve().parents[3]
 SKILLS = snapshot_skills(ROOT)
@@ -140,6 +140,28 @@ def test_token_budget_and_atomic_claims(tmp_path):
     with pytest.raises(HTTPException, match="409"):
         repo.reserve_call(job.id, claim.lease_id, call.model_copy(update={"call_id": "blocked"}))
     assert repo.detail(job.id).total_tokens == 1100  # The last in-flight call can cross the soft limit.
+
+
+def test_compaction_memory_is_durable_and_lease_fenced(tmp_path):
+    repo = JobRepository(tmp_path / "db.sqlite3")
+    job = create(repo)
+    claim = repo.claim()
+    memory = AgentMemory(scope="plan:1-5:0", summary="Confirmed fact from source-1:page3. Reference facts are not project facts.")
+    repo.progress(job.id, claim.lease_id, WorkerProgress(step="compacting"))
+    repo.progress(job.id, claim.lease_id, WorkerProgress(step="continuing", memory=memory))
+    repo.progress(job.id, claim.lease_id, WorkerProgress(step="continuing", memory=memory))
+    assert repo.detail(job.id).progress == "资料记忆已整理，继续当前步骤"
+    assert len([event for event in repo.events(job.id, 0) if event.event_type == "progress"]) == 2
+    assert repo.detail(job.id).total_tokens == 0  # Progress itself cannot reset/alter billing.
+    with repo.connect() as db:
+        db.execute("UPDATE generation_jobs SET lease_until=0 WHERE id=?", (job.id,))
+    resumed = JobRepository(repo.path).claim()
+    assert resumed.memory == memory
+    with pytest.raises(HTTPException, match="409"):
+        repo.progress(job.id, claim.lease_id, WorkerProgress(step="continuing", memory=AgentMemory(scope="other", summary="stale")))
+    repo.control(job.id, "cancel")
+    with pytest.raises(HTTPException, match="409"):
+        repo.progress(job.id, resumed.lease_id, WorkerProgress(step="planning"))
 
 
 def test_api_worker_auth_disable_and_download(tmp_path):

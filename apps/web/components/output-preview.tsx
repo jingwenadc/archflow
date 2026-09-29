@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "@/lib/api";
 import type { ArtifactUnit, GenerationJobDetail, GenerationJobRecord } from "@/lib/job-contracts";
-import { jobStatuses, orderedJobs } from "@/lib/workflow";
+import { jobStatuses, orderedJobs, workflowState } from "@/lib/workflow";
 
 type ExportState = { status: string; requested: boolean; error: string | null; result: { page_count: number; format: string; missing_facts: number } | null };
 const url = (path: string) => `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}${path}`;
@@ -71,8 +71,7 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable }:
     <div className="generation-panel output-only">
       {error && <p className="generation-error" role="status">{error}</p>}
       {!selectedId ? <p className="generation-note">提纲与成果会显示在这里。请从中间的项目对话开始。</p> : !detail ? <p role="status">正在读取 V{version} 成果…</p> : <>
-        <p className="generation-note">V{version} · {jobStatuses[detail.status]}。切换这里只改变预览，不会改变对话或启动任务。</p>
-        {!detail.outline && <p className="generation-note">此版本尚无提纲或成果；已确认需求仍保留在对话中。</p>}
+        {!detail.outline && <div className="output-empty"><strong>{workflowState(detail).label}</strong><p className="generation-note">提纲准备好后会显示在这里，确认操作在对话中。</p>{versions.some(item => item.id !== selectedId) && <p className="generation-note">也可以从上方选择已有版本继续查看。</p>}</div>}
         {detail.outline && <details open={!exported?.result}><summary>章节提纲 · V{version}</summary><p>{detail.outline.summary}</p><ol>{detail.outline.sections.map(section => <li key={section.start_unit}><strong>{section.start_unit}–{section.end_unit} · {section.title}</strong><p>{section.objective}</p></li>)}</ol></details>}
         {exported?.requested && ["queued", "processing"].includes(exported.status) && <p role="status">正在排版和渲染可编辑文件…</p>}
         {exported?.status === "failed" && <div role="alert"><p>{exported.error}</p><button onClick={() => void requestExport(`/api/v1/jobs/${selectedId}/export/retry`)}>重试排版</button></div>}

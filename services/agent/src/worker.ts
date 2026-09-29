@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { ApiClient } from "./client.js";
 import { runStep, type ModelConfig } from "./runtime.js";
+import { contextOverride } from "./model-limits.js";
 import type { ClaimedJob } from "./contracts.js";
 
 export async function processJob(api: ApiClient, claim: ClaimedJob, config: ModelConfig, shutdown: AbortSignal) {
@@ -18,7 +19,7 @@ export async function processJob(api: ApiClient, claim: ClaimedJob, config: Mode
   }, 15_000);
   try {
     while (claim.job.status === "running" && !signal.aborted) {
-      await runStep(api, claim, config, AbortSignal.any([signal, AbortSignal.timeout(5 * 60_000)]));
+      await runStep(api, claim, config, AbortSignal.any([signal, AbortSignal.timeout(15 * 60_000)]));
       claim.job = await api.detail(claim.job.id);
     }
   } catch (error) {
@@ -41,9 +42,9 @@ async function main() {
   };
   const config: ModelConfig | null = enabled ? {
     baseUrl: required("ARCHFLOW_LLM_BASE_URL"), apiKey: required("ARCHFLOW_LLM_API_KEY"),
-    contextWindow: positive("ARCHFLOW_LLM_CONTEXT_WINDOW", 65536), maxOutputTokens: positive("ARCHFLOW_LLM_MAX_OUTPUT_TOKENS", 8192), workDir: process.env.ARCHFLOW_AGENT_DIR ?? "/tmp/archflow-agent",
+    contextWindow: contextOverride(process.env.ARCHFLOW_LLM_CONTEXT_WINDOW), maxOutputTokens: positive("ARCHFLOW_LLM_MAX_OUTPUT_TOKENS", 8192), workDir: process.env.ARCHFLOW_AGENT_DIR ?? "/tmp/archflow-agent",
   } : null;
-  if (config && (config.maxOutputTokens >= config.contextWindow || !/^https?:\/\//.test(config.baseUrl))) throw new Error("Invalid provider limits or URL.");
+  if (config && !/^https?:\/\//.test(config.baseUrl)) throw new Error("Invalid provider URL.");
   const api = enabled ? new ApiClient(process.env.ARCHFLOW_API_URL ?? "http://api:8000", required("ARCHFLOW_WORKER_TOKEN")) : null;
   console.log(enabled ? "ArchFlow Pi worker started." : "ArchFlow Pi worker disabled; no model calls will be made.");
   while (!shutdown.signal.aborted) {

@@ -5,7 +5,18 @@ import ts from "typescript";
 
 const source = await readFile(new URL("../lib/workflow.ts", import.meta.url), "utf8");
 const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
-const { requestedPageCount, requirementBrief, conversationTimeline, orderedJobs } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+const { requestedPageCount, requirementBrief, conversationTimeline, orderedJobs, workflowState, failureHelp } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+
+test("progress reflects the actual stage; context failures never suggest buying more budget", () => {
+  const job = { stage: "planning", status: "running", completed_units: 0, storyboard_units: 0, target_units: 40, total_tokens: 92738, max_total_tokens: 250000, model_calls: 5, max_model_calls: 400, error: "本阶段上下文过长" };
+  assert.equal(workflowState(job).index, 0);
+  assert.equal(workflowState({ ...job, progress: "正在整理资料记忆，随后继续" }).label, "正在整理资料记忆，随后继续");
+  assert.equal(workflowState({ ...job, status: "waiting_outline" }).index, 1);
+  assert.equal(workflowState({ ...job, stage: "storyboarding", status: "waiting_storyboard" }).index, 2);
+  assert.equal(failureHelp(job).kind, "context");
+  assert.equal(failureHelp({ ...job, total_tokens: 250100 }).kind, "budget");
+  assert.equal(failureHelp({ ...job, error: "Provider unavailable" }).kind, "other");
+});
 
 test("latest requested length wins; page references and rejected lengths do not", () => {
   for (const [text, count] of [

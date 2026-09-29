@@ -4,8 +4,34 @@ import type { GenerationJobRecord } from "./job-contracts";
 export const jobStatuses: Record<string, string> = {
   queued: "排队中", running: "正在处理资料与生成内容", waiting_outline: "提纲已准备好，等待你确认",
   waiting_storyboard: "逐页策划已准备好，等待你确认", needs_review: "内容有待确认项，请复核",
-  completed: "内容审校完成", failed: "任务失败，可从检查点重试", cancelled: "任务已取消",
+  completed: "内容已生成", failed: "需要处理后继续", cancelled: "已停止",
 };
+
+export const workflowSteps = ["整理资料与提纲", "确认提纲", "逐页策划", "生成与审校", "排版与下载"];
+
+export function workflowState(job: GenerationJobRecord & { progress?: string | null }) {
+  const index = job.status === "waiting_outline" ? 1 : job.stage === "planning" ? 0
+    : job.stage === "storyboarding" ? 2 : ["completed", "needs_review"].includes(job.status) ? 4 : 3;
+  const label = job.status === "queued" ? "已接收任务，正在等待处理"
+    : job.status === "waiting_outline" ? "提纲已准备好，请在右侧查看后确认"
+    : job.status === "waiting_storyboard" ? "逐页策划已准备好，请查看后确认生成"
+    : job.status === "completed" ? "内容生成与审校完成，文件排版和下载在右侧"
+    : job.status === "needs_review" ? "已有审阅稿，请核对待确认项"
+    : job.status === "cancelled" ? "已停止，原需求和已有成果保留"
+    : job.status === "failed" ? "暂时停止，已有成果与需求保留"
+    : job.progress ?? (job.stage === "planning" ? "正在阅读资料、整理提纲" : job.stage === "storyboarding"
+      ? `正在策划页面 · ${job.storyboard_units} / ${job.target_units}` : job.stage === "final_review"
+      ? "正在检查整份文档的一致性" : `正在生成与审校 · ${job.completed_units} / ${job.target_units}`);
+  return { index, label };
+}
+
+export function failureHelp(job: GenerationJobRecord) {
+  if (job.total_tokens >= job.max_total_tokens || job.model_calls >= job.max_model_calls || /budget.*exhaust|预算.*(?:耗尽|上限)/i.test(job.error ?? ""))
+    return { kind: "budget", message: "已达到你批准的运行上限。已有内容保留；批准新的总上限后才能继续。", retry: "" };
+  if (/context|上下文|compaction/i.test(job.error ?? ""))
+    return { kind: "context", message: "资料上下文需要重新整理。现在会先整理记忆再继续当前步骤，不需要提高累计预算。", retry: "整理资料后继续" };
+  return { kind: "other", message: "当前步骤未完成。可以从已保存的进度继续；若仍失败，请展开技术诊断查看原因。", retry: "继续当前步骤" };
+}
 
 export const isActiveJob = (job: GenerationJobRecord | null) => !!job && ["queued", "running", "waiting_outline", "waiting_storyboard"].includes(job.status);
 

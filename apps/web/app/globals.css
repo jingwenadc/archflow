@@ -607,6 +607,14 @@ a { color: inherit; text-decoration: none; }
 .requirement-summary { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .confirmed-requirement details p { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 8px; }
 .workflow-task { border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 10px; }
+.workflow-progress { display: grid; gap: 12px; }
+.workflow-progress ol { list-style: none; padding: 0; margin: 0; display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #7b8790; }
+.workflow-progress li { display: flex; align-items: center; gap: 5px; }
+.workflow-progress li span { border: 1px solid #dce3e7; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; }
+.workflow-progress li.current { color: #173b45; font-weight: 600; }
+.workflow-progress li.current span { color: white; background: #173b45; border-color: #173b45; }
+.workflow-progress li.done { color: #366c64; }
+.output-empty { padding: 20px 0; display: grid; gap: 12px; }
 .output-preview { display: flex; flex-direction: column; min-height: 0; height: 100%; }
 .output-version-bar { position: sticky; top: 0; z-index: 1; background: #fff; display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .output-version-bar label { font-weight: 600; }

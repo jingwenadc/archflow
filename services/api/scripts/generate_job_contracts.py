@@ -41,7 +41,7 @@ def resolve(schema: dict, definitions: dict) -> dict:
 
 root = Path(__file__).resolve().parents[3]
 definitions = {}
-names = ["GenerationJobCreate", "GenerationJobRecord", "GenerationJobDetail", "ClaimedJob", "JobCheckpoint", "UsageRecord", "GenerationJobEvent"]
+names = ["GenerationJobCreate", "GenerationJobRecord", "GenerationJobDetail", "ClaimedJob", "JobCheckpoint", "UsageRecord", "GenerationJobEvent", "WorkerProgress"]
 for name in names:
     schema = getattr(models, name).model_json_schema()
     definitions.update(schema.pop("$defs", {}))

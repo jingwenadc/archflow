@@ -1,4 +1,4 @@
-import type { ClaimedJob, GenerationJobDetail, ArtifactUnit, JobCheckpoint, UsageRecord } from "./contracts.js";
+import type { ClaimedJob, GenerationJobDetail, ArtifactUnit, JobCheckpoint, UsageRecord, WorkerProgress } from "./contracts.js";
 
 export class ApiClient {
   constructor(private readonly baseUrl: string, private readonly token: string) {}
@@ -32,6 +32,7 @@ export class ApiClient {
     return this.request<{ data: string; mime_type: string }>(`/internal/jobs/${id}/images?image_id=${encodeURIComponent(imageId)}`);
   }
   heartbeat(id: string, lease: string) { return this.request<void>(`/internal/jobs/${id}/heartbeat`, {}, lease); }
+  progress(id: string, lease: string, body: WorkerProgress) { return this.request<void>(`/internal/jobs/${id}/progress`, body, lease); }
   checkpoint(id: string, lease: string, body: JobCheckpoint) {
     return this.request<GenerationJobDetail>(`/internal/jobs/${id}/checkpoint`, body, lease);
   }

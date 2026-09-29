@@ -4,9 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiRequest, jobDownloadUrl, type Message } from "@/lib/api";
 import type { GenerationJobCreate, GenerationJobDetail, GenerationJobRecord } from "@/lib/job-contracts";
-import { conversationTimeline, isActiveJob, jobStatuses, orderedJobs, requestedPageCount, requirementBrief } from "@/lib/workflow";
+import { conversationTimeline, failureHelp, isActiveJob, jobStatuses, orderedJobs, requestedPageCount, requirementBrief } from "@/lib/workflow";
 import { ConversationMessage } from "./conversation-message";
 import { OutputPreview } from "./output-preview";
+import { WorkflowProgress } from "./workflow-progress";
 
 export function GenerationPanel({ projectId, conversationId, module, messages, outputMount, onOutputAvailable, materialsReady, ready, sendingMessage }: {
   projectId: string; conversationId: string | null; module: "concept" | "bid" | "drawing"; messages: Message[];
@@ -134,25 +135,25 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
 
   function confirmedCard(record: GenerationJobRecord, version: number) {
     const current = record.id === job?.id;
+    const failure = failureHelp(record);
     return <section className="workflow-card confirmed-requirement" aria-label={`已确认需求 V${version}`} data-job-id={record.id}>
       <div className="requirement-card-heading"><h3>已确认需求 · V{version}</h3><button className="text-button" onClick={() => { selectPreview(record.id); onOutputAvailable(); }}>查看 V{version} 成果</button></div>
-      <p className="requirement-summary">{record.goal}</p>
-      <p className="generation-note">{record.target_units} {module === "concept" ? "页" : "章"} · {jobStatuses[record.status]}</p>
-      <details><summary>完整需求与运行上限</summary><p>{record.goal}</p><p>累计 token 总上限：{record.max_total_tokens.toLocaleString()} · 最多 {record.max_model_calls} 次调用。此需求已保存在服务器，切换版本或刷新不会删除。</p></details>
+      <p className="requirement-summary">{record.goal.length > 300 ? `${record.goal.slice(0, 300)}…` : record.goal}</p>
+      <p className="generation-note">{record.target_units} {module === "concept" ? "页" : "章"}{!current && ` · ${jobStatuses[record.status]}`}</p>
+      <details><summary>查看完整需求</summary><p>{record.goal}</p></details>
       {current && job && <div className="workflow-task" aria-label={`V${version} 任务状态`} aria-live="polite">
-        {hasNewRequest && !generating ? <p className="generation-note">已收到新需求，V{version} 尚未按新要求更新。请确认下方新版本需求；旧提纲不会被当作新提纲批准。</p> : <strong>{jobStatuses[job.status]}</strong>}
-        <progress max={job.target_units} value={job.completed_units} aria-label="已审校内容进度" />
-        <p>{job.completed_units} / {job.target_units} 个内容单元已通过文字审校。</p>
-        {job.error && <p role="alert">{job.error}</p>}
+        <WorkflowProgress job={job} />
+        {hasNewRequest && !generating && <p className="generation-note">已收到新需求，请确认下方新版本；本版需求与成果保留。</p>}
+        {job.status === "failed" && <p role="alert">{failure.message}</p>}
         <div className="generation-actions">
           {!hasNewRequest && ["waiting_outline", "waiting_storyboard"].includes(job.status) && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/approve`)}>{job.status === "waiting_outline" ? `批准 V${version} 提纲，继续逐页策划` : `批准 V${version} 逐页策划并授权生成全部页面`}</button>}
           {isActiveJob(job) && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/cancel`)}>取消任务</button>}
-          {!hasNewRequest && job.status === "failed" && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/retry`)}>从检查点重试</button>}
+          {!hasNewRequest && job.status === "failed" && failure.kind !== "budget" && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/retry`)}>{failure.retry}</button>}
         </div>
         {job.batches.filter(batch => batch.review && !batch.review.passed).map(batch => <p className="generation-error" key={batch.batch_index}>{batch.review?.summary} {batch.review?.issues.join("；")}</p>)}
         {job.final_review && !job.final_review.passed && <p className="generation-error">{job.final_review.summary} {job.final_review.issues.join("；")}</p>}
-        <details><summary>运行详情与诊断草稿</summary><p>{job.model_calls} 次模型调用 · {job.total_tokens.toLocaleString()} tokens</p>{["completed", "needs_review", "failed", "cancelled"].includes(job.status) && <a href={jobDownloadUrl(job.id)}>下载 JSON 诊断草稿</a>}</details>
-        {!hasNewRequest && job.status === "failed" && <details><summary>调整总上限并从检查点继续</summary><label>累计 token 上限<input type="number" min={job.total_tokens + 1} max={10000000} value={tokenBudget} onChange={event => setTokenBudget(Number(event.target.value))} /></label><p>这是新的总上限，不是额外赠送额度；将继续产生模型费用。</p><button disabled={busy || tokenBudget <= job.total_tokens} onClick={() => void perform(`/api/v1/jobs/${job.id}/continue`, { max_model_calls: Math.min(1000, Math.max(job.max_model_calls, job.model_calls + 100)), max_total_tokens: tokenBudget })}>批准新上限并继续</button></details>}
+        <details><summary>技术诊断与用量</summary>{job.error && <p>{job.error}</p>}<p>{job.model_calls} / {job.max_model_calls} 次调用 · {job.total_tokens.toLocaleString()} / {job.max_total_tokens.toLocaleString()} 累计 tokens</p>{["completed", "needs_review", "failed", "cancelled"].includes(job.status) && <a href={jobDownloadUrl(job.id)}>下载诊断数据（JSON）</a>}</details>
+        {!hasNewRequest && job.status === "failed" && failure.kind === "budget" && <details open><summary>批准运行额度后继续</summary><label>新的累计 token 总上限<input type="number" min={job.total_tokens + 1} max={10000000} value={tokenBudget} onChange={event => setTokenBudget(Number(event.target.value))} /></label><p>将继续产生模型费用，不会自动增加额度。</p><button disabled={busy || tokenBudget <= job.total_tokens} onClick={() => void perform(`/api/v1/jobs/${job.id}/continue`, { max_model_calls: Math.min(1000, Math.max(job.max_model_calls, job.model_calls + 100)), max_total_tokens: tokenBudget })}>批准新上限并继续</button></details>}
       </div>}
     </section>;
   }
@@ -172,7 +173,6 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
       <label className="requirement-editor">编辑需求摘要<textarea aria-label="需求摘要" rows={3} value={goal} disabled={busy} onChange={event => { setGoal(event.target.value); requestKey.current = null; }} /></label>
       <label>{module === "concept" ? "预计页数" : "内容章节数"}<input type="number" min={1} max={500} value={count} disabled={busy} onChange={event => { setCount(Number(event.target.value)); requestKey.current = null; }} /></label>
       <details><summary>运行上限与费用控制</summary><label>累计 token 上限<input type="number" min={1000} max={10000000} value={tokenBudget} disabled={busy} onChange={event => { setTokenBudget(Number(event.target.value)); requestKey.current = null; }} /></label><p>含输入和输出，非美元预算。最多 400 次调用；达到上限会停止并保留检查点，不会自动提高预算。单次已启动的请求可能使 token 总量超出上限。</p></details>
-      <p className="generation-note">本次上限：{tokenBudget.toLocaleString()} 累计 tokens。长文档或复杂参考资料可能需要批准追加上限。</p>
       {job && ["completed", "needs_review"].includes(job.status) && <><label>基于 V{versions.length} 修改页码 / 内容单元<input value={revisionRange} disabled={busy} onChange={event => { setRevisionRange(event.target.value); requestKey.current = null; }} placeholder="例如 3-5" /></label><button disabled={!canStart || count !== job.target_units} onClick={revise}>确认范围，生成新版本</button>{count !== job.target_units && <p className="generation-note">局部修改保留原有 {job.target_units} 个内容单元；调整总数量请使用下方重新整理提纲。</p>}</>}
       <button disabled={!canStart} onClick={() => void start()}>{busy ? "正在保存并创建版本…" : !job ? "确认需求，整理提纲" : `确认 ${count} ${module === "concept" ? "页" : "章"}需求，生成新版本提纲`}</button>
       {generating && <p>当前版本正在执行，补充要求已保存。完成后可确认新版本，也可以先取消当前任务。</p>}

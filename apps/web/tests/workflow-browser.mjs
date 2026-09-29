@@ -108,7 +108,9 @@ await page.locator(".output-panel").getByText("第一版素材预览", { exact: 
 const historyBefore = await thread.innerText();
 const writesBefore = writes.length;
 await selector.selectOption("v2");
-await page.locator(".output-panel").getByText("此版本尚无提纲或成果；已确认需求仍保留在对话中。", { exact: true }).waitFor();
+await page.locator(".output-panel").getByText("提纲准备好后会显示在这里，确认操作在对话中。", { exact: true }).waitFor();
+assert.equal(await v2Card.getByLabel("文档制作步骤").count(), 1);
+assert.equal(await v2Card.getByRole("group", { name: "批准运行额度后继续" }).count(), 0);
 assert.equal(await thread.innerText(), historyBefore);
 await selector.selectOption("v1");
 await page.locator(".output-panel").getByText("第一版素材预览", { exact: true }).waitFor();
@@ -130,6 +132,11 @@ await page.getByRole("button", { name: "发送消息", exact: true }).click();
 await pending.waitFor();
 assert.equal(await pending.getByRole("spinbutton", { name: "预计页数", exact: true }).inputValue(), "40");
 assert.equal(await pending.getByRole("button", { name: "确认 40 页需求，生成新版本提纲", exact: true }).isDisabled(), true);
+// Legacy context failures get the correct remedy, not an unrelated budget upsell.
+jobs[1].status = "failed"; jobs[1].error = "本阶段上下文过长。请提高 context window。"; jobs[1].updated_at = timestamp();
+await v2Card.getByText("资料上下文需要重新整理。现在会先整理记忆再继续当前步骤，不需要提高累计预算。", { exact: true }).waitFor();
+assert.equal(await v2Card.getByText("本阶段上下文过长。请提高 context window。", { exact: true }).isVisible(), false);
+assert.equal(await v2Card.getByRole("button", { name: "批准新上限并继续", exact: true }).count(), 0);
 await page.screenshot({ path: process.env.ARCHFLOW_TEST_SCREENSHOT ?? "/tmp/archflow-workflow-history.png", fullPage: true });
 assert.deepEqual(unexpected, []);
 assert.deepEqual(errors, []);

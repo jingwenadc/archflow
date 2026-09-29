@@ -18,7 +18,7 @@ from fastapi import HTTPException
 from .models import (
     ArtifactUnit, ClaimedJob, DocumentPlan, GenerationBatchRecord, GenerationJobCreate,
     GenerationJobDetail, GenerationJobEvent, GenerationJobRecord, JobCheckpoint,
-    ReviewResult, SkillSnapshot, UsageRecord,
+    ReviewResult, SkillSnapshot, UsageRecord, AgentMemory, WorkerProgress,
 )
 from .materials import DocumentRepository
 
@@ -102,8 +102,12 @@ class JobRepository:
                     model TEXT NOT NULL, total_tokens INTEGER,
                     PRIMARY KEY(job_id, call_id)
                 );
+                CREATE TABLE IF NOT EXISTS generation_memory (
+                    job_id TEXT PRIMARY KEY REFERENCES generation_jobs(id), payload TEXT NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS generation_queue_idx ON generation_jobs(status, lease_until, created_at);
                 CREATE INDEX IF NOT EXISTS generation_project_idx ON generation_jobs(project_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS generation_events_job_idx ON generation_events(job_id, id DESC);
             """)
 
     @contextmanager
@@ -187,11 +191,13 @@ class JobRepository:
                 "review": json.loads(batch["review"]) if batch["review"] else None,
             })) for batch in db.execute("SELECT * FROM generation_batches WHERE job_id=? ORDER BY batch_index", (job_id,))]
             storyboard_count = db.execute("SELECT count(*) FROM generation_units WHERE job_id=? AND kind='storyboard'", (job_id,)).fetchone()[0]
+            progress = db.execute("SELECT message FROM generation_events WHERE job_id=? AND event_type='progress' ORDER BY id DESC LIMIT 1", (job_id,)).fetchone()
         completed = sum(batch.end_unit - batch.start_unit + 1 for batch in batches if batch.status == "completed")
         return GenerationJobDetail(**(row | {
             "completed_units": completed, "storyboard_units": storyboard_count, "batches": batches,
             "outline": json.loads(row["outline"]) if row["outline"] else None,
             "final_review": json.loads(row["final_review"]) if row["final_review"] else None,
+            "progress": progress[0] if progress else None,
         }))
 
     def list(self, project_id: str, conversation_id: str | None = None) -> list[GenerationJobRecord]:
@@ -238,11 +244,28 @@ class JobRepository:
                        (lease_id, now + 90, timestamp(), row["id"]))
             self.event(db, row["id"], "running", "Worker 已领取任务，从已保存的检查点继续。")
             skills = [SkillSnapshot(**item) for item in json.loads(row["skills"])]
+            memory = db.execute("SELECT payload FROM generation_memory WHERE job_id=?", (row["id"],)).fetchone()
         detail = self.detail(row["id"])
         batch = next((item for item in detail.batches if item.status != "completed"), None)
         current = self.units(detail.id, "draft", batch.start_unit - 1, batch.end_unit - batch.start_unit + 1) if batch and batch.status == "draft" else []
         return ClaimedJob(job=detail, lease_id=lease_id, skills=skills, current_units=current,
-                          sources=self.documents.catalog(detail.id), revision_units=self.documents.revisions(detail.id))
+                          sources=self.documents.catalog(detail.id), revision_units=self.documents.revisions(detail.id),
+                          memory=AgentMemory.model_validate_json(memory[0]) if memory else None)
+
+    def progress(self, job_id: str, lease_id: str, request: WorkerProgress) -> None:
+        messages = {"skills": "正在应用设计技能", "materials": "正在阅读项目资料",
+                    "planning": "正在整理章节提纲", "storyboarding": "正在策划每页内容",
+                    "generating": "正在生成页面内容", "reviewing": "正在检查来源与内容一致性",
+                    "compacting": "正在整理资料记忆，随后继续", "continuing": "资料记忆已整理，继续当前步骤"}
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.leased(db, job_id, lease_id)
+            if request.memory:
+                db.execute("INSERT INTO generation_memory VALUES(?,?) ON CONFLICT(job_id) DO UPDATE SET payload=excluded.payload",
+                           (job_id, request.memory.model_dump_json()))
+            previous = db.execute("SELECT message FROM generation_events WHERE job_id=? AND event_type='progress' ORDER BY id DESC LIMIT 1", (job_id,)).fetchone()
+            if not previous or previous[0] != messages[request.step]:
+                self.event(db, job_id, "progress", messages[request.step])
 
     def heartbeat(self, job_id: str, lease_id: str) -> None:
         with self.connect() as db:

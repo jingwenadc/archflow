@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { ApiClient } from "../client.js";
 import { processJob } from "../worker.js";
 import { readSkill, runStep, type ModelConfig } from "../runtime.js";
-import type { ArtifactUnit, ClaimedJob, GenerationJobDetail, JobCheckpoint, UsageRecord } from "../contracts.js";
+import type { ArtifactUnit, ClaimedJob, GenerationJobDetail, JobCheckpoint, UsageRecord, WorkerProgress, AgentMemory } from "../contracts.js";
+import { contextOverride, modelLimits } from "../model-limits.js";
 
 class MemoryApi extends ApiClient {
   job: GenerationJobDetail = {
@@ -20,9 +21,14 @@ class MemoryApi extends ApiClient {
     batches: [{ batch_index: 0, start_unit: 1, end_unit: 5, status: "pending", draft_count: 0 }, { batch_index: 1, start_unit: 6, end_unit: 8, status: "pending", draft_count: 0 }],
   };
   data = { storyboard: [] as ArtifactUnit[], draft: [] as ArtifactUnit[] };
+  steps: string[] = [];
+  memory: AgentMemory | null = null;
   constructor() { super("http://unused", "test"); }
   override async detail() { return structuredClone(this.job); }
   override async heartbeat() {}
+  override async progress(_id: string, _lease: string, body: WorkerProgress) {
+    this.steps.push(body.step); if (body.memory) this.memory = body.memory;
+  }
   override async units(_id: string, kind: "draft" | "storyboard", offset: number, limit = 10) { return this.data[kind].slice(offset, offset + limit); }
   override async call(_id: string, _lease: string, action: "reserve" | "usage", usage: UsageRecord) {
     if (action === "reserve") { if (this.job.model_calls >= this.job.max_model_calls) throw new Error("Budget exhausted"); this.job.model_calls++; }
@@ -46,22 +52,36 @@ class MemoryApi extends ApiClient {
     return this.detail();
   }
   async claimSnapshot(): Promise<ClaimedJob> { return {
-    job: await this.detail(), lease_id: "test-lease", current_units: [], skills: [{ slug: "test-skill", description: "For conceptual documents", sha256: "frozen", files: { "SKILL.md": "Read this skill before submitting. Produce review drafts based on the brief; never fabricate facts. Require outline/storyboard approvals." } }],
+    job: await this.detail(), lease_id: "test-lease", memory: this.memory, current_units: [], skills: [{ slug: "test-skill", description: "For conceptual documents", sha256: "frozen", files: { "SKILL.md": "Read this skill before submitting. Produce review drafts based on the brief; never fabricate facts. Require outline/storyboard approvals." } }],
   }; }
 }
 
 /** A deterministic SSE fixture exercises the REAL Pi Responses adapter and tool loop. */
-async function provider() {
+async function provider(pressure = false) {
   const requests: Record<string, unknown>[] = [];
+  let lastPrompt: Record<string, any>;
+  let inspectedLargePage = false;
   const server = createServer(async (req, res) => {
     let raw = ""; for await (const chunk of req) raw += chunk;
     const payload = JSON.parse(raw); requests.push(payload);
     assert.equal(payload.store, false);
     assert.equal(req.url, "/v1/responses");
     assert.equal(req.headers.authorization, "Bearer test-only");
-    assert.deepEqual(payload.tools.map((item: { name: string }) => item.name).sort(), ["read", "read_units", "submit"]);
     const input = payload.input as Array<{ type?: string; role?: string; content?: Array<{ text?: string }>; name?: string }>;
-    const prompt = JSON.parse(input.find(item => item.role === "user")!.content![0].text!);
+    const compacting = !payload.tools?.length;
+    if (compacting) {
+      // Real SDK compaction uses the SAME Responses endpoint, without gateway-specific APIs.
+      const text = `Confirmed brief: ${lastPrompt.brief.slice(0, 40)}; evidence source: user-brief. Continue ${lastPrompt.task}. Re-read test-skill before submit.`;
+      const item = { type: "message", id: `msg_${requests.length}`, role: "assistant", status: "completed", content: [{ type: "output_text", text, annotations: [] }] };
+      const response = { id: `resp_${requests.length}`, object: "response", model: payload.model, status: "completed", output: [item], usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 } };
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      for (const event of [{ type: "response.created", response: { ...response, status: "in_progress", output: [] } }, { type: "response.output_item.added", output_index: 0, item: { ...item, content: [] } }, { type: "response.content_part.added", item_id: item.id, output_index: 0, content_index: 0, part: { type: "output_text", text: "", annotations: [] } }, { type: "response.output_text.delta", item_id: item.id, output_index: 0, content_index: 0, delta: text }, { type: "response.output_item.done", output_index: 0, item }, { type: "response.completed", response }]) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      res.end(); return;
+    }
+    assert.deepEqual(payload.tools.map((item: { name: string }) => item.name).sort(), ["read", "read_units", "submit"]);
+    const taskText = input.filter(item => item.role === "user").flatMap(item => item.content ?? []).find(item => item.text?.startsWith('{"task"'))?.text;
+    if (taskText) lastPrompt = JSON.parse(taskText);
+    const prompt = lastPrompt;
     const hasRead = input.some(item => item.type === "function_call" && item.name === "read");
     let name = "read"; let args: unknown = { path: "/skills/test-skill/SKILL.md" };
     if (hasRead) {
@@ -72,9 +92,13 @@ async function provider() {
         args = { passed: !failed, summary: failed ? "Revise content" : "Consistent", issues: failed ? ["Needs revision"] : [] };
       } else args = { units: Array.from({ length: prompt.unit_range[1] - prompt.unit_range[0] + 1 }, (_, index) => ({ unit_index: prompt.unit_range[0] + index, title: `Unit ${prompt.unit_range[0] + index}`, body: prompt.task === "draft" && !prompt.previous_review ? "first draft" : "revised draft", evidence: ["user-brief"], missing_facts: [] })) };
     }
+    if (pressure && hasRead && !inspectedLargePage) {
+      name = "read_units"; args = { kind: "storyboard", offset: 0, limit: 1 }; inspectedLargePage = true;
+    }
     const argumentsText = JSON.stringify(args);
     const item = { type: "function_call", id: `fc_${requests.length}`, call_id: `call_${requests.length}`, name, arguments: argumentsText, status: "completed" };
-    const response = { id: `resp_${requests.length}`, object: "response", model: payload.model, status: "completed", output: [item], usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 } };
+    const inputTokens = pressure && requests.length === 1 ? 20000 : 100;
+    const response = { id: `resp_${requests.length}`, object: "response", model: payload.model, status: "completed", output: [item], usage: { input_tokens: inputTokens, output_tokens: 20, total_tokens: inputTokens + 20 } };
     res.writeHead(200, { "Content-Type": "text/event-stream" });
     for (const event of [
       { type: "response.created", response: { ...response, status: "in_progress", output: [] } },
@@ -111,6 +135,58 @@ test("Pi selects/reads skills, pauses for two approvals, iterates revisions and 
     assert.equal(api.job.total_tokens, endpoint.requests.length * 120);
     assert.ok(endpoint.requests.some(request => request.model === "review-model"));
     assert.equal(api.data.draft.length, 8);
+  } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
+test("model IDs resolve official caps; gateway overrides never exceed those caps", () => {
+  assert.equal(modelLimits("gpt-5.5").contextWindow, 1_050_000);
+  assert.equal(modelLimits("gpt-5.5-2026-04-23").contextWindow, 1_050_000);
+  assert.equal(modelLimits("gpt-5.2").contextWindow, 400_000);
+  assert.equal(modelLimits("gpt-4.1").contextWindow, 1_047_576);
+  assert.equal(modelLimits("gpt-4o").reasoning, false);
+  assert.equal(modelLimits("gpt-5.5", 128000).contextWindow, 128000);
+  assert.equal(modelLimits("gpt-5.5", 2_000_000).contextWindow, 1_050_000);
+  assert.equal(contextOverride("auto"), undefined);
+  assert.throws(() => contextOverride("NaN"));
+  assert.throws(() => modelLimits("gpt-unknown"), /Unknown model/);
+  assert.throws(() => modelLimits("gpt-5.5-gateway"), /Unknown model/);
+  assert.equal(modelLimits("private-alias", 128000).contextWindow, 128000);
+});
+
+test("context pressure compacts, accounts every request, saves memory and continues to approval", async () => {
+  const endpoint = await provider(true); const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-compact-")); const api = new MemoryApi();
+  const config = { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir };
+  // A large removable tool result simulates accumulated project observations.
+  api.data.storyboard = [{ unit_index: 1, title: "Pressure fixture", body: "x".repeat(60000), evidence: ["user-brief"], missing_facts: [] }];
+  try {
+    await processJob(api, await api.claimSnapshot(), config, new AbortController().signal);
+    assert.equal(api.job.status, "waiting_outline", api.job.error ?? "compaction did not continue");
+    assert.ok(api.steps.includes("compacting"));
+    assert.ok(api.steps.includes("continuing"));
+    assert.match(api.memory!.summary, /user-brief/);
+    assert.match(api.memory!.summary, /明确的测试条件/);
+    assert.equal(api.memory!.scope, "plan:1-5:0");
+    assert.equal(api.job.model_calls, endpoint.requests.length);
+    assert.equal(api.job.total_tokens, 19900 + endpoint.requests.length * 120);
+    assert.ok(endpoint.requests.length < 10, "compaction must not loop indefinitely");
+    assert.ok(endpoint.requests.some(request => !(request.tools as unknown[] | undefined)?.length));
+    api.job.status = "running";
+    await runStep(api, await api.claimSnapshot(), config, new AbortController().signal);
+    assert.match(JSON.stringify(endpoint.requests.at(-1)), /continuation_memory/);
+  } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
+test("compaction cannot bypass a model-call budget", async () => {
+  const endpoint = await provider(true); const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-compact-budget-")); const api = new MemoryApi();
+  api.job.max_model_calls = 3;
+  api.data.storyboard = [{ unit_index: 1, title: "Pressure fixture", body: "x".repeat(60000), evidence: ["user-brief"], missing_facts: [] }];
+  try {
+    await processJob(api, await api.claimSnapshot(), { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir }, new AbortController().signal);
+    assert.equal(api.job.status, "failed");
+    assert.ok(api.steps.includes("compacting"));
+    assert.equal(endpoint.requests.length, 3);
+    assert.equal(api.job.model_calls, 3);
+    assert.equal(api.job.total_tokens, 20260);
   } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
 });
 

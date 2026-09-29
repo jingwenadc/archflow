@@ -12,7 +12,7 @@ from .conversation_repository import ConversationRepository
 from .job_repository import JobRepository, snapshot_skills
 from .models import (
     ArtifactUnit, ClaimedJob, GenerationJobCreate, GenerationJobDetail,
-    GenerationJobEvent, GenerationJobRecord, JobCheckpoint, UsageRecord,
+    GenerationJobEvent, GenerationJobRecord, JobCheckpoint, UsageRecord, WorkerProgress,
 )
 from .project_repository import ProjectRepository
 from .materials import DocumentRepository, collect_materials
@@ -169,6 +169,11 @@ def job_routers(settings: Settings, projects: ProjectRepository,
     @internal.post("/{job_id}/heartbeat", status_code=204)
     def heartbeat(job_id: str, lease_id: Annotated[str, Header()]) -> Response:
         jobs.heartbeat(job_id, lease_id)
+        return Response(status_code=204)
+
+    @internal.post("/{job_id}/progress", status_code=204)
+    def progress(job_id: str, request: WorkerProgress, lease_id: Annotated[str, Header()]) -> Response:
+        jobs.progress(job_id, lease_id, request)
         return Response(status_code=204)
 
     @internal.post("/{job_id}/checkpoint", response_model=GenerationJobDetail)

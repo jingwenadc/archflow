@@ -196,6 +196,16 @@ class UsageRecord(BaseModel):
     total_tokens: int = Field(ge=0)
 
 
+class AgentMemory(BaseModel):
+    scope: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=40000)
+
+
+class WorkerProgress(BaseModel):
+    step: Literal["skills", "materials", "planning", "storyboarding", "generating", "reviewing", "compacting", "continuing"]
+    memory: AgentMemory | None = None
+
+
 class GenerationBatchRecord(BaseModel):
     batch_index: int
     start_unit: int
@@ -233,6 +243,7 @@ class GenerationJobDetail(GenerationJobRecord):
     outline: DocumentPlan | None = None
     batches: list[GenerationBatchRecord]
     final_review: ReviewResult | None = None
+    progress: str | None = None
 
 
 class GenerationJobEvent(BaseModel):
@@ -257,3 +268,4 @@ class ClaimedJob(BaseModel):
     current_units: list[ArtifactUnit]
     sources: list[dict] = Field(default_factory=list)
     revision_units: list[int] = Field(default_factory=list)
+    memory: AgentMemory | None = None
