@@ -39,6 +39,17 @@ test("paused progress preserves completed outline and distinguishes unsaved stor
   }
 });
 
+test("work indicators follow running jobs, never queue, approval, failure or old scope conflicts", () => {
+  for (const module of ["concept", "bid"]) {
+    const job = { module, stage: "planning", progress: "正在应用设计技能", storyboard_units: 0, completed_units: 0, target_units: 17 };
+    for (const status of ["queued", "running", "waiting_outline", "waiting_storyboard", "needs_review", "completed", "failed", "cancelled"])
+      assert.equal(workflowState({ ...job, status }).working, status === "running", status);
+    assert.equal(workflowState({ ...job, status: "running", scope_mismatch: true }).working, false);
+    assert.equal(workflowState({ ...job, status: "running" }).label, job.progress);
+    assert.doesNotMatch(workflowState({ ...job, status: "waiting_outline" }).label, /正在应用/);
+  }
+});
+
 test("long requirements never silently discard the confirmed brief", () => {
   const confirmed = { goal: "保留此已确认约束", created_at: "2026-01-01T00:00:00Z" };
   const brief = requirementBrief([{ role: "user", content: "新增资料".repeat(6000), created_at: "2026-01-02T00:00:00Z" }], confirmed);

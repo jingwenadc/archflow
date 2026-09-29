@@ -22,6 +22,7 @@ let limits = { max_model_calls: 20000, max_total_tokens: 100000000 };
 function makeJob(body) {
   const date = timestamp();
   return { ...body, id: `v${jobs.length + 1}`, status: jobs.length ? "running" : "waiting_outline", stage: "planning",
+    progress: jobs.length ? "正在应用设计技能" : null,
     completed_units: 0, storyboard_units: 0, model_calls: 0, total_tokens: 0, model: "mock", review_model: "mock",
     created_at: date, updated_at: date, batches: [], final_review: null, error: null,
     outline: jobs.length ? null : { summary: "第一版素材预览", sections: [{ title: "项目分析", start_unit: 1, end_unit: 10, objective: "V1 原有提纲" }] },
@@ -137,6 +138,7 @@ await page.waitForFunction(() => !document.querySelector(".pending-requirement >
 await pending.getByRole("button", { name: "确认需求，整理提纲", exact: true }).click();
 const v1Card = page.getByRole("region", { name: "已确认需求 V1", exact: true });
 await v1Card.waitFor();
+assert.equal(await v1Card.locator(".loading-icon").count(), 0, "Waiting for approval must not imply model activity");
 await page.locator(".output-panel").getByText("第一版素材预览", { exact: true }).waitFor();
 await pending.waitFor({ state: "detached" });
 assert.match(await v1Card.innerText(), /面向甲方/);
@@ -158,6 +160,17 @@ assert.deepEqual(order, [initialGoal, "v1", "10页太少了，做40页ppt"]);
 await pending.getByRole("button", { name: "确认 40 页需求，生成新版本提纲", exact: true }).click();
 const v2Card = page.getByRole("region", { name: "已确认需求 V2", exact: true });
 await v2Card.waitFor();
+const activity = v2Card.getByRole("status");
+await activity.getByText("正在应用设计技能", { exact: true }).waitFor();
+const spinner = activity.locator(".loading-icon");
+assert.equal(await spinner.isVisible(), true);
+assert.equal(await spinner.getAttribute("aria-hidden"), "true");
+assert.equal(await spinner.evaluate(element => getComputedStyle(element).animationName), "archflow-spin");
+await page.emulateMedia({ reducedMotion: "reduce" });
+assert.equal(await spinner.evaluate(element => getComputedStyle(element).animationName), "none");
+assert.equal(await activity.getByText("正在应用设计技能", { exact: true }).isVisible(), true);
+await page.emulateMedia({ reducedMotion: "no-preference" });
+await v2Card.screenshot({ path: "/tmp/archflow-working.png" });
 assert.equal(jobs[1].target_units, 40);
 assert.equal(jobs[1].max_total_tokens, 200000000);
 assert.equal(jobs[1].max_model_calls, 30000);
@@ -199,6 +212,7 @@ await v2Card.getByText("当前上下文未能整理完成。可以从检查点�
 assert.equal(await v2Card.getByText("Opaque provider diagnostic", { exact: true }).isVisible(), false);
 assert.equal(await v2Card.getByRole("button", { name: "批准新上限并继续", exact: true }).count(), 0);
 await v2Card.getByText("章节提纲已完成；逐页策划已暂停", { exact: true }).waitFor();
+assert.equal(await v2Card.locator(".loading-icon").count(), 0, "A paused task must stop animating");
 assert.equal(await v2Card.getByText("逐页策划尚未保存", { exact: true }).count(), 1);
 // Scope conflicts in old records require explicit reconfirmation, never a silent rewrite.
 jobs[1].target_units = 10; jobs[1].scope_mismatch = true; jobs[1].updated_at = timestamp();
@@ -214,5 +228,5 @@ await settingsDialog.waitFor({ state: "hidden" });
 await page.screenshot({ path: process.env.ARCHFLOW_TEST_SCREENSHOT ?? "/tmp/archflow-workflow-history.png", fullPage: true });
 assert.deepEqual(unexpected, []);
 assert.deepEqual(errors, []);
-console.log(JSON.stringify({ editableNumericDrafts: true, persistentCards: true, chronologicalHistory: true, editedBriefPreserved: true, pageCount40: true, independentPreview: true, previousPreviewDuringGeneration: true, refreshedHistory: true, defaultExpandedResizableEditor: true, mockedWrites: writes, realModelCalls: 0, errors }));
+console.log(JSON.stringify({ truthfulWorkAnimation: true, reducedMotion: true, editableNumericDrafts: true, persistentCards: true, chronologicalHistory: true, editedBriefPreserved: true, pageCount40: true, independentPreview: true, previousPreviewDuringGeneration: true, refreshedHistory: true, defaultExpandedResizableEditor: true, mockedWrites: writes, realModelCalls: 0, errors }));
 } finally { await browser.close(); }

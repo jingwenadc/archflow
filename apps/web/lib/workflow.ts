@@ -27,7 +27,7 @@ export function workflowState(job: GenerationJobRecord & { progress?: string | n
     : job.progress ?? (job.stage === "planning" ? "正在阅读资料、整理提纲" : job.stage === "storyboarding"
       ? `正在策划${job.module === "concept" ? "页面" : "章节"} · ${job.storyboard_units} / ${job.target_units}` : job.stage === "final_review"
       ? "正在检查整份文档的一致性" : `正在生成与审校 · ${job.completed_units} / ${job.target_units}`);
-  return { index, label, saved };
+  return { index, label, saved, working: job.status === "running" && !job.scope_mismatch };
 }
 
 export function failureHelp(job: GenerationJobRecord) {

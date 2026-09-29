@@ -81,3 +81,7 @@ export function EyeOffIcon(props: IconProps) {
 export function SettingsIcon(props: IconProps) {
   return <Icon {...props}><path d="m9 3-1 3-3 1-2 3 2 2-1 3 2 3 3-1 2 2 3-1 1-3 3-1 2-3-2-2 1-3-2-3-3 1-2-2Z" /><circle cx="12" cy="12" r="3" /></Icon>;
 }
+
+export function LoadingIcon(props: IconProps) {
+  return <Icon {...props}><circle cx="12" cy="12" r="9" opacity=".2" /><path d="M12 3a9 9 0 0 1 9 9" /></Icon>;
+}

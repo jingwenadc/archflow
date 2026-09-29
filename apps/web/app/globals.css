@@ -614,6 +614,11 @@ a { color: inherit; text-decoration: none; }
 .workflow-progress li.current { color: #173b45; font-weight: 600; }
 .workflow-progress li.current span { color: white; background: #173b45; border-color: #173b45; }
 .workflow-progress li.done { color: #366c64; }
+.workflow-activity { display: flex; align-items: center; gap: 8px; }
+.workflow-activity.is-working { color: #173b45; font-weight: 500; }
+.loading-icon { width: 18px; height: 18px; flex-shrink: 0; animation: archflow-spin 1s linear infinite; }
+@keyframes archflow-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .loading-icon { animation: none; } }
 .output-empty { padding: 20px 0; display: grid; gap: 12px; }
 .output-preview { display: flex; flex-direction: column; min-height: 0; height: 100%; }
 .output-version-bar { position: sticky; top: 0; z-index: 1; background: #fff; display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
