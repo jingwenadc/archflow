@@ -2,11 +2,9 @@ packages:
   - apps/*
   - services/agent
 
-# pnpm 11 fails CI if a dependency has an unreviewed install script.
-# esbuild verifies/installs its platform binary; the other published packages
-# do not need their lifecycle scripts for ArchFlow's runtime or web build.
-onlyBuiltDependencies:
-  - esbuild
-ignoredBuiltDependencies:
-  - '@google/genai'
-  - protobufjs
+# pnpm 11 requires an explicit decision for every dependency build script.
+# esbuild verifies its platform binary; the other scripts are unnecessary here.
+allowBuilds:
+  esbuild: true
+  '@google/genai': false
+  protobufjs: false
