@@ -3,6 +3,7 @@ import { modules, type ModuleKey } from "@/lib/workspace-data";
 import { BrandMark } from "./brand";
 import { LibraryIcon } from "./icons";
 import { ProjectSwitcher } from "./project-switcher";
+import { RunSettingsButton } from "./run-settings";
 
 export function AppHeader({ active }: { active: ModuleKey | "skills" }) {
   return (
@@ -20,6 +21,7 @@ export function AppHeader({ active }: { active: ModuleKey | "skills" }) {
         <Link className={active === "skills" ? "library-link is-active" : "library-link"} href="/skills">
           <LibraryIcon />案例 / 技能库
         </Link>
+        <RunSettingsButton />
         <span className="avatar" aria-label="当前用户">J</span>
       </div>
     </header>

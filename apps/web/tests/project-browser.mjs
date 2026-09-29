@@ -11,6 +11,7 @@ try {
     const unexpected = [], errors = [];
     await context.route(/\/api\/v1\//, async route => {
       const request = route.request(), url = new URL(request.url());
+      if (url.pathname === "/api/v1/settings/run-limits" && request.method() === "GET") return route.fulfill({ json: { max_model_calls: 20000, max_total_tokens: 100000000 } });
       if (url.pathname === "/api/v1/projects") {
         if (request.method() === "POST") projects.push({ id: crypto.randomUUID(), name: request.postDataJSON().name });
         return route.fulfill({ json: request.method() === "POST" ? projects.at(-1) : projects });

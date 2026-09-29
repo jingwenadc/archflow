@@ -91,7 +91,10 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   const response = await fetch(`${apiBaseUrl}${path}`, init);
   if (!response.ok) {
     const error = await response.json().catch(() => null);
-    throw new Error(error?.detail ?? "请求失败，请稍后重试。");
+    const detail = error?.detail;
+    const message = Array.isArray(detail) ? detail.map((item: { msg?: string }) => item.msg).filter(Boolean).join("；")
+      : typeof detail === "object" && detail ? detail.message : detail;
+    throw new Error(message || "请求失败，请稍后重试。");
   }
   return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }

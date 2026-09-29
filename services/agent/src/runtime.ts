@@ -32,7 +32,7 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
   const memoryScope = `${action}:${start}-${end}:${batch?.draft_count ?? 0}`;
   // The hard cap is the model's window. Compact earlier to avoid repeatedly paying
   // for large transcripts; this threshold is NOT a smaller provider context cap.
-  const compactAt = Math.min(Math.floor(limits.contextWindow * 0.65), Math.max(12_000, Math.floor(job.max_total_tokens / 8)));
+  const compactAt = Math.min(Math.floor(limits.contextWindow * 0.65), 32_000);
   await mkdir(config.workDir, { recursive: true, mode: 0o700 });
   const folder = await mkdtemp(resolve(config.workDir, `${job.id}-`));
   const runtime = await ModelRuntime.create({ authPath: resolve(folder, "auth.json"), modelsPath: null, modelsStorePath: resolve(folder, "models.json"), refreshOnCreate: false, allowModelNetwork: false });
@@ -184,7 +184,7 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
       sources: claim.sources?.map(source => ({ ...source, assets: (source.assets as unknown[]).slice(0, 30) })), revision_units: claim.revision_units,
       outline: job.outline, unit_range: [start, end], existing_units: current, previous_review: batch?.review,
       batch_reviews: action === "final_review" ? job.batches.map(item => ({ range: [item.start_unit, item.end_unit], status: item.status, summary: item.review?.summary.slice(0, 400) })) : undefined,
-      instructions: action === "plan" ? "Choose the most suitable skill from the catalog. Create a contiguous outline covering exactly target_units. Missing inputs should be identified, not invented. Submit plan; await human approval externally."
+      instructions: action === "plan" ? "Choose the most suitable skill from the catalog. target_units is the confirmed deliverable length, NOT the number of outline sections. For concept it means actual slides; for bid it means chapters. Create at most 30 contiguous outline sections covering every requested unit exactly once. A section can span many pages. Set plan.target_units to this confirmed count. Summary is project/design strategy, NOT document length, workflow narration or approval instructions: those are displayed separately by the app. The typed scope overrides any earlier length in the brief. Missing inputs should be identified, not invented. Submit plan; await human approval externally."
         : action === "storyboard" ? "Create exactly the requested consecutive storyboard units: title, intended content, evidence and missing facts. No final content yet."
         : action === "draft" ? "Generate or revise exactly these units using the approved outline/storyboard and actual source evidence. Resolve previous review issues. For a scoped revision, only change revision_units and return every other existing unit unchanged. Use read_units(kind=draft) to obtain those original units. Do not include units outside this batch."
         : action === "review" ? "Independently inspect every unit in this batch against the selected skill, brief and storyboard (use read_units). Fail if facts are invented or required content is missing. passed=true requires issues=[]."

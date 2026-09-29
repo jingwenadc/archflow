@@ -77,3 +77,7 @@ export function FolderIcon(props: IconProps) {
 export function EyeOffIcon(props: IconProps) {
   return <Icon {...props}><path d="m3 3 18 18" /><path d="M10.6 10.7a2 2 0 0 0 2.7 2.7" /><path d="M9.9 4.2A10.7 10.7 0 0 1 12 4c5.5 0 9 5.3 9 8a7.3 7.3 0 0 1-1.4 2.9" /><path d="M6.7 6.7C4.3 8.1 3 10.4 3 12c0 2.7 3.5 8 9 8 1.3 0 2.5-.3 3.5-.7" /></Icon>;
 }
+
+export function SettingsIcon(props: IconProps) {
+  return <Icon {...props}><path d="m9 3-1 3-3 1-2 3 2 2-1 3 2 3 3-1 2 2 3-1 1-3 3-1 2-3-2-2 1-3-2-3-3 1-2-2Z" /><circle cx="12" cy="12" r="3" /></Icon>;
+}

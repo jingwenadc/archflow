@@ -87,7 +87,7 @@ async function provider(pressure = false) {
     let name = "read"; let args: unknown = { path: "/skills/test-skill/SKILL.md" };
     if (hasRead) {
       name = "submit";
-      if (prompt.task === "plan") args = { skill_slug: "test-skill", summary: "Outline ready", sections: [{ title: "Project", start_unit: 1, end_unit: prompt.target_units, objective: "Review draft" }] };
+      if (prompt.task === "plan") args = { skill_slug: "test-skill", summary: "Outline ready", target_units: prompt.target_units, sections: [{ title: "Project", start_unit: 1, end_unit: prompt.target_units, objective: "Review draft" }] };
       else if (["review", "final_review"].includes(prompt.task)) {
         const failed = prompt.task === "review" && prompt.existing_units[0].body === "first draft";
         args = { passed: !failed, summary: failed ? "Revise content" : "Consistent", issues: failed ? ["Needs revision"] : [] };
@@ -98,7 +98,7 @@ async function provider(pressure = false) {
     }
     const argumentsText = JSON.stringify(args);
     const item = { type: "function_call", id: `fc_${requests.length}`, call_id: `call_${requests.length}`, name, arguments: argumentsText, status: "completed" };
-    const inputTokens = pressure && requests.length === 1 ? 20000 : 100;
+    const inputTokens = pressure && requests.length === 1 ? 26000 : 100;
     const response = { id: `resp_${requests.length}`, object: "response", model: payload.model, status: "completed", output: [item], usage: { input_tokens: inputTokens, output_tokens: 20, total_tokens: inputTokens + 20 } };
     res.writeHead(200, { "Content-Type": "text/event-stream" });
     for (const event of [
@@ -185,9 +185,10 @@ test("worker API reads structured failure categories regardless of message langu
 for (const module of ["concept", "bid"] as const) test(`${module}: context pressure compacts, accounts every request, saves memory and continues to approval`, async () => {
   const endpoint = await provider(true); const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-compact-")); const api = new MemoryApi();
   api.job.module = module;
+  api.job.max_total_tokens = module === "concept" ? 100_000_000 : 100_000;
   const config = { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir };
   // A large removable tool result simulates accumulated project observations.
-  api.data.storyboard = [{ unit_index: 1, title: "Pressure fixture", body: "x".repeat(60000), evidence: ["user-brief"], missing_facts: [] }];
+  api.data.storyboard = [{ unit_index: 1, title: "Pressure fixture", body: "x".repeat(100000), evidence: ["user-brief"], missing_facts: [] }];
   try {
     await processJob(api, await api.claimSnapshot(), config, new AbortController().signal);
     assert.equal(api.job.status, "waiting_outline", api.job.error ?? "compaction did not continue");
@@ -197,7 +198,7 @@ for (const module of ["concept", "bid"] as const) test(`${module}: context press
     assert.match(api.memory!.summary, /明确的测试条件/);
     assert.equal(api.memory!.scope, "plan:1-5:0");
     assert.equal(api.job.model_calls, endpoint.requests.length);
-    assert.equal(api.job.total_tokens, 19900 + endpoint.requests.length * 120);
+    assert.equal(api.job.total_tokens, 25900 + endpoint.requests.length * 120);
     assert.ok(endpoint.requests.length < 10, "compaction must not loop indefinitely");
     assert.ok(endpoint.requests.some(request => !(request.tools as unknown[] | undefined)?.length));
     api.job.status = "running";
@@ -209,7 +210,7 @@ for (const module of ["concept", "bid"] as const) test(`${module}: context press
 test("compaction cannot bypass a model-call budget", async () => {
   const endpoint = await provider(true); const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-compact-budget-")); const api = new MemoryApi();
   api.job.max_model_calls = 3;
-  api.data.storyboard = [{ unit_index: 1, title: "Pressure fixture", body: "x".repeat(60000), evidence: ["user-brief"], missing_facts: [] }];
+  api.data.storyboard = [{ unit_index: 1, title: "Pressure fixture", body: "x".repeat(100000), evidence: ["user-brief"], missing_facts: [] }];
   try {
     await processJob(api, await api.claimSnapshot(), { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir }, new AbortController().signal);
     assert.equal(api.job.status, "failed");
@@ -217,7 +218,7 @@ test("compaction cannot bypass a model-call budget", async () => {
     assert.ok(api.steps.includes("compacting"));
     assert.equal(endpoint.requests.length, 3);
     assert.equal(api.job.model_calls, 3);
-    assert.equal(api.job.total_tokens, 20260);
+    assert.equal(api.job.total_tokens, 26260);
   } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
 });
 

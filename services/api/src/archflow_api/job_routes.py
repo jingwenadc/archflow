@@ -12,7 +12,7 @@ from .conversation_repository import ConversationRepository
 from .job_repository import JobRepository, snapshot_skills
 from .models import (
     ArtifactUnit, ClaimedJob, GenerationJobCreate, GenerationJobDetail,
-    GenerationJobEvent, GenerationJobRecord, JobCheckpoint, UsageRecord, WorkerProgress,
+    GenerationJobEvent, GenerationJobRecord, JobCheckpoint, UsageRecord, WorkerProgress, RunLimits,
 )
 from .project_repository import ProjectRepository
 from .materials import DocumentRepository, collect_materials
@@ -54,6 +54,8 @@ def job_routers(settings: Settings, projects: ProjectRepository,
         if not settings.agent_enabled or not settings.worker_token:
             raise HTTPException(503, "模型服务尚未配置。")
         old = jobs.detail(job_id)
+        if old.scope_mismatch:
+            raise HTTPException(409, "原需求范围不一致，请重新确认完整需求，而不是局部修改。")
         if old.status not in {"completed", "needs_review", "cancelled", "failed"}:
             raise HTTPException(409, "请先等待任务结束或取消，然后创建新版本。")
         instruction = str(request.get("instruction", "")).strip()
@@ -62,14 +64,19 @@ def job_routers(settings: Settings, projects: ProjectRepository,
             raise HTTPException(422, "请提供修改要求与有效页码范围。")
         if len(jobs.units(old.id, "draft", 0, 500)) != old.target_units:
             raise HTTPException(409, "原版本尚未生成完整内容，请先补齐或重新整理提纲。")
-        calls = request.get("max_model_calls", old.max_model_calls)
-        tokens = request.get("max_total_tokens", old.max_total_tokens)
-        if type(calls) is not int or not 1 <= calls <= 1000 or type(tokens) is not int or not 1000 <= tokens <= 10_000_000:
+        defaults = jobs.run_settings.get()
+        try:
+            limits = RunLimits(max_model_calls=request.get("max_model_calls", defaults.max_model_calls),
+                               max_total_tokens=request.get("max_total_tokens", defaults.max_total_tokens))
+        except ValueError:
             raise HTTPException(422, "请提供有效的模型调用与累计 token 上限。")
-        body = GenerationJobCreate(project_id=old.project_id, conversation_id=old.conversation_id, module=old.module,
-                                   goal=(old.goal[:15000] + "\n本次修改要求：" + instruction), target_units=old.target_units,
-                                   batch_size=old.batch_size, max_revision_rounds=old.max_revision_rounds,
-                                   max_model_calls=calls, max_total_tokens=tokens)
+        try:
+            body = GenerationJobCreate(project_id=old.project_id, conversation_id=old.conversation_id, module=old.module,
+                                       goal=(old.goal + "\n本次修改要求：" + instruction), target_units=old.target_units, count_override=old.count_override,
+                                       batch_size=old.batch_size, max_revision_rounds=old.max_revision_rounds,
+                                       **limits.model_dump())
+        except ValueError:
+            raise HTTPException(422, "完整需求过长或交付数量改变，请精简需求或重新确认完整范围；不会截断原需求。")
         created = jobs.create(body, idempotency_key or str(uuid4()), snapshot_skills(settings.repository_root), settings.llm_model, settings.review_model,
                               sources=documents.sources(old.id), parent_id=old.id, revision_units=sorted(set(indices)))
         return jobs.detail(created.id)
@@ -89,10 +96,10 @@ def job_routers(settings: Settings, projects: ProjectRepository,
         return jobs.units(job_id, kind, offset, limit)
 
     @public.post("/{job_id}/continue", response_model=GenerationJobDetail)
-    def continue_job(job_id: str, request: dict):
+    def continue_job(job_id: str, request: RunLimits):
         if not settings.agent_enabled or not settings.worker_token:
             raise HTTPException(503, "模型服务尚未配置。")
-        return jobs.continue_with_budget(job_id, request.get("max_model_calls"), request.get("max_total_tokens"))
+        return jobs.continue_with_budget(job_id, request.max_model_calls, request.max_total_tokens)
 
     @public.get("/{job_id}/events", response_model=list[GenerationJobEvent])
     def get_events(job_id: str, after: int = Query(0, ge=0)) -> list[GenerationJobEvent]:

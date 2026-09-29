@@ -9,25 +9,30 @@ export const jobStatuses: Record<string, string> = {
 
 export const workflowSteps = (module: GenerationJobRecord["module"]) => ["整理资料与提纲", "确认提纲", module === "concept" ? "逐页策划" : "逐章策划", "生成与审校", "排版与下载"];
 
-export function workflowState(job: GenerationJobRecord & { progress?: string | null }) {
-  const index = job.status === "waiting_outline" ? 1 : job.stage === "planning" ? 0
-    : job.stage === "storyboarding" ? 2 : ["completed", "needs_review"].includes(job.status) ? 4 : 3;
-  const label = job.status === "queued" ? "已接收任务，正在等待处理"
+export function workflowState(job: GenerationJobRecord & { progress?: string | null; outline?: unknown }) {
+  const index = job.status === "completed" ? 4 : job.status === "waiting_outline" || (job.stage === "planning" && !!job.outline) ? 1 : job.stage === "planning" ? 0
+    : job.stage === "storyboarding" ? 2 : 3;
+  const unit = job.module === "concept" ? "页" : "章";
+  const planning = job.module === "concept" ? "逐页策划" : "逐章策划";
+  const paused = ["failed", "cancelled"].includes(job.status);
+  const saved = job.stage === "storyboarding" ? job.storyboard_units > 0 ? `已保存 ${job.storyboard_units} / ${job.target_units} ${unit}策划` : `${planning}尚未保存`
+    : ["generating", "final_review"].includes(job.stage) ? `${job.completed_units} / ${job.target_units} ${unit}已通过内容审校` : "";
+  const label = job.scope_mismatch ? "交付数量与文字要求不一致，请重新确认需求"
+    : job.status === "queued" ? "已接收任务，正在等待处理"
     : job.status === "waiting_outline" ? "提纲已准备好，请在右侧查看后确认"
     : job.status === "waiting_storyboard" ? `${job.module === "concept" ? "逐页" : "逐章"}策划已准备好，请查看后确认生成`
     : job.status === "completed" ? "内容生成与审校完成，文件排版和下载在右侧"
     : job.status === "needs_review" ? "已有审阅稿，请核对待确认项"
-    : job.status === "cancelled" ? "已停止，原需求和已有成果保留"
-    : job.status === "failed" ? "暂时停止，已有成果与需求保留"
+    : paused ? job.stage === "storyboarding" ? `章节提纲已完成；${planning}${job.status === "cancelled" ? "已停止" : "已暂停"}` : `${job.status === "cancelled" ? "已停止" : "暂时暂停"}，原需求和已有成果保留`
     : job.progress ?? (job.stage === "planning" ? "正在阅读资料、整理提纲" : job.stage === "storyboarding"
       ? `正在策划${job.module === "concept" ? "页面" : "章节"} · ${job.storyboard_units} / ${job.target_units}` : job.stage === "final_review"
       ? "正在检查整份文档的一致性" : `正在生成与审校 · ${job.completed_units} / ${job.target_units}`);
-  return { index, label };
+  return { index, label, saved };
 }
 
 export function failureHelp(job: GenerationJobRecord) {
   if (job.total_tokens >= job.max_total_tokens || job.model_calls >= job.max_model_calls || job.failure_kind === "budget")
-    return { kind: "budget", message: "已达到你批准的运行上限。已有内容保留；批准新的总上限后才能继续。", retry: "" };
+    return { kind: "budget", message: "本次任务已达到启动时的运行上限，已有内容保留。可按顶部运行设置继续，不会清零已用量。", retry: "" };
   if (job.failure_kind === "context")
     return { kind: "context", message: "当前上下文未能整理完成。可以从检查点继续；若重复失败，需要检查模型窗口或减少单次输入，而不是提高累计预算。", retry: "继续整理资料" };
   if (job.failure_kind === "configuration")
@@ -38,17 +43,6 @@ export function failureHelp(job: GenerationJobRecord) {
 }
 
 export const isActiveJob = (job: GenerationJobRecord | null) => !!job && ["queued", "running", "waiting_outline", "waiting_storyboard"].includes(job.status);
-
-// Page references (第 3 页 / 3–5 页) are not a requested document length.
-export function requestedUnitCount(text: string, module: "concept" | "bid" | "drawing" = "concept"): number | undefined {
-  const pattern = module === "bid" ? /(?<!\d)(\d+)\s*(?:章节|章|chapters?\b)/giu : /(?<!\d)(\d+)\s*(?:页|slides?\b|pages?\b)/giu;
-  const matches = [...text.matchAll(pattern)].filter(match => {
-    const prefix = text.slice(0, match.index!);
-    return !/第\s*$|\d\s*[-–到至]\s*$|(?:不要|不做|不是|not)\s*$/iu.test(prefix);
-  });
-  const match = matches.at(-1);
-  return match ? Number(match[1]) : undefined;
-}
 
 export function requirementBrief(messages: Message[], confirmed?: GenerationJobRecord | null): string {
   const additions = messages.filter(message => message.role === "user" && (!confirmed || Date.parse(message.created_at) > Date.parse(confirmed.created_at)));

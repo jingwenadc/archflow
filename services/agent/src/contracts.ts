@@ -29,6 +29,7 @@ export type DocumentPlan = {
   skill_slug: string;
   summary: string;
   sections: Array<PlanSection>;
+  target_units: number;
 };
 
 export type GenerationBatchRecord = {
@@ -48,8 +49,9 @@ export type GenerationJobCreate = {
   target_units: number;
   batch_size?: number;
   max_revision_rounds?: number;
-  max_model_calls?: number;
-  max_total_tokens?: number;
+  count_override?: boolean;
+  max_model_calls?: number | null;
+  max_total_tokens?: number | null;
 };
 
 export type GenerationJobDetail = {
@@ -59,6 +61,8 @@ export type GenerationJobDetail = {
   module: "concept" | "bid" | "drawing";
   goal: string;
   target_units: number;
+  count_override?: boolean;
+  scope_mismatch?: boolean;
   batch_size: number;
   max_revision_rounds: number;
   status: "queued" | "running" | "waiting_outline" | "waiting_storyboard" | "needs_review" | "completed" | "failed" | "cancelled";
@@ -96,6 +100,8 @@ export type GenerationJobRecord = {
   module: "concept" | "bid" | "drawing";
   goal: string;
   target_units: number;
+  count_override?: boolean;
+  scope_mismatch?: boolean;
   batch_size: number;
   max_revision_rounds: number;
   status: "queued" | "running" | "waiting_outline" | "waiting_storyboard" | "needs_review" | "completed" | "failed" | "cancelled";
@@ -130,10 +136,28 @@ export type PlanSection = {
   objective: string;
 };
 
+export type RequirementDraft = {
+  module: "concept" | "bid" | "drawing";
+  goal: string;
+  base_goal?: string;
+  fallback_units?: number;
+};
+
+export type ResolvedRequirement = {
+  target_units: number;
+  requested_units: number | null;
+  count_override: boolean;
+};
+
 export type ReviewResult = {
   passed: boolean;
   summary: string;
   issues: Array<string>;
+};
+
+export type RunLimits = {
+  max_model_calls: number;
+  max_total_tokens: number;
 };
 
 export type SkillSnapshot = {
@@ -158,4 +182,4 @@ export type WorkerProgress = {
   memory?: AgentMemory | null;
 };
 
-export const schemas = {"DocumentPlan": {"properties": {"skill_slug": {"maxLength": 100, "minLength": 1, "type": "string"}, "summary": {"maxLength": 4000, "minLength": 1, "type": "string"}, "sections": {"items": {"properties": {"title": {"maxLength": 200, "minLength": 1, "type": "string"}, "start_unit": {"maximum": 500, "minimum": 1, "type": "integer"}, "end_unit": {"maximum": 500, "minimum": 1, "type": "integer"}, "objective": {"maxLength": 2000, "minLength": 1, "type": "string"}}, "required": ["title", "start_unit", "end_unit", "objective"], "type": "object"}, "maxItems": 30, "minItems": 1, "type": "array"}}, "required": ["skill_slug", "summary", "sections"], "type": "object"}, "UnitBatch": {"properties": {"units": {"items": {"properties": {"unit_index": {"maximum": 500, "minimum": 1, "type": "integer"}, "title": {"maxLength": 200, "minLength": 1, "type": "string"}, "body": {"maxLength": 12000, "minLength": 1, "type": "string"}, "evidence": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}, "missing_facts": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}, "layout": {"default": "text", "enum": ["cover", "text", "image", "table"], "type": "string"}, "image_id": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null}, "table": {"items": {"items": {"type": "string"}, "type": "array"}, "maxItems": 15, "type": "array"}}, "required": ["unit_index", "title", "body", "evidence", "missing_facts"], "type": "object"}, "maxItems": 10, "minItems": 1, "type": "array"}}, "required": ["units"], "type": "object"}, "ReviewResult": {"properties": {"passed": {"type": "boolean"}, "summary": {"maxLength": 4000, "minLength": 1, "type": "string"}, "issues": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}}, "required": ["passed", "summary", "issues"], "type": "object"}};
+export const schemas = {"DocumentPlan": {"properties": {"skill_slug": {"maxLength": 100, "minLength": 1, "type": "string"}, "summary": {"description": "Project and design strategy summary. Scope is declared separately in target_units; do not propose a different length or narrate workflow/approval instructions.", "maxLength": 4000, "minLength": 1, "type": "string"}, "sections": {"items": {"properties": {"title": {"maxLength": 200, "minLength": 1, "type": "string"}, "start_unit": {"description": "Inclusive actual slide/chapter index, not the outline section number.", "maximum": 500, "minimum": 1, "type": "integer"}, "end_unit": {"description": "Inclusive actual slide/chapter index; a section may span many units.", "maximum": 500, "minimum": 1, "type": "integer"}, "objective": {"maxLength": 2000, "minLength": 1, "type": "string"}}, "required": ["title", "start_unit", "end_unit", "objective"], "type": "object"}, "maxItems": 30, "minItems": 1, "type": "array"}, "target_units": {"description": "Must equal the user's confirmed deliverable length, not len(sections).", "maximum": 500, "minimum": 1, "type": "integer"}}, "required": ["skill_slug", "summary", "sections", "target_units"], "type": "object"}, "UnitBatch": {"properties": {"units": {"items": {"properties": {"unit_index": {"maximum": 500, "minimum": 1, "type": "integer"}, "title": {"maxLength": 200, "minLength": 1, "type": "string"}, "body": {"maxLength": 12000, "minLength": 1, "type": "string"}, "evidence": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}, "missing_facts": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}, "layout": {"default": "text", "enum": ["cover", "text", "image", "table"], "type": "string"}, "image_id": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null}, "table": {"items": {"items": {"type": "string"}, "type": "array"}, "maxItems": 15, "type": "array"}}, "required": ["unit_index", "title", "body", "evidence", "missing_facts"], "type": "object"}, "maxItems": 10, "minItems": 1, "type": "array"}}, "required": ["units"], "type": "object"}, "ReviewResult": {"properties": {"passed": {"type": "boolean"}, "summary": {"maxLength": 4000, "minLength": 1, "type": "string"}, "issues": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}}, "required": ["passed", "summary", "issues"], "type": "object"}};

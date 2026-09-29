@@ -18,9 +18,11 @@ from fastapi import HTTPException
 from .models import (
     ArtifactUnit, ClaimedJob, DocumentPlan, GenerationBatchRecord, GenerationJobCreate,
     GenerationJobDetail, GenerationJobEvent, GenerationJobRecord, JobCheckpoint,
-    ReviewResult, SkillSnapshot, UsageRecord, AgentMemory, WorkerProgress,
+    ReviewResult, SkillSnapshot, UsageRecord, AgentMemory, WorkerProgress, RunLimits,
 )
 from .materials import DocumentRepository
+from .requirements import scope_mismatch, plan_scope_error
+from .run_settings import RunSettingsRepository
 
 
 def timestamp() -> str:
@@ -61,9 +63,15 @@ def snapshot_skills(repository_root: Path) -> list[SkillSnapshot]:
 
 
 class JobRepository:
+    @staticmethod
+    def has_scope_conflict(row: sqlite3.Row | dict) -> bool:
+        return scope_mismatch(row["goal"], row["module"], row["target_units"], row["count_override"]) or bool(
+            row["outline"] and plan_scope_error(json.loads(row["outline"]), row["module"], row["target_units"]))
+
     def __init__(self, database_path: Path) -> None:
         self.path = database_path
         self.documents = DocumentRepository(database_path)
+        self.run_settings = RunSettingsRepository(database_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -112,6 +120,8 @@ class JobRepository:
             db.execute("BEGIN IMMEDIATE")
             if "failure_kind" not in {column[1] for column in db.execute("PRAGMA table_info(generation_jobs)")}:
                 db.execute("ALTER TABLE generation_jobs ADD COLUMN failure_kind TEXT")
+            if "count_override" not in {column[1] for column in db.execute("PRAGMA table_info(generation_jobs)")}:
+                db.execute("ALTER TABLE generation_jobs ADD COLUMN count_override INTEGER NOT NULL DEFAULT 0")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -147,6 +157,7 @@ class JobRepository:
                model: str, review_model: str, sources: list[dict] | None = None,
                parent_id: str | None = None, revision_units: list[int] | None = None) -> GenerationJobDetail:
         fingerprint = hashlib.sha256((request.model_dump_json() + str(parent_id) + str(revision_units)).encode()).hexdigest()
+        defaults = self.run_settings.get()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             previous = db.execute("SELECT id,request_hash FROM generation_jobs WHERE project_id=? AND idempotency_key=?",
@@ -163,6 +174,8 @@ class JobRepository:
                 raise HTTPException(404, "Conversation not found in this project and module.")
             job_id = str(uuid4())
             values = request.model_dump() | {
+                "max_model_calls": request.max_model_calls if request.max_model_calls is not None else defaults.max_model_calls,
+                "max_total_tokens": request.max_total_tokens if request.max_total_tokens is not None else defaults.max_total_tokens,
                 "id": job_id, "model": model, "review_model": review_model,
                 "status": "queued", "stage": "planning", "created_at": timestamp(),
                 "updated_at": timestamp(), "idempotency_key": key, "request_hash": fingerprint,
@@ -196,18 +209,23 @@ class JobRepository:
             storyboard_count = db.execute("SELECT count(*) FROM generation_units WHERE job_id=? AND kind='storyboard'", (job_id,)).fetchone()[0]
             progress = db.execute("SELECT message FROM generation_events WHERE job_id=? AND event_type='progress' ORDER BY id DESC LIMIT 1", (job_id,)).fetchone()
         completed = sum(batch.end_unit - batch.start_unit + 1 for batch in batches if batch.status == "completed")
+        outline = json.loads(row["outline"]) if row["outline"] else None
+        if outline is not None:
+            # v1 stored scope on the job only. Adapt reads without rewriting history.
+            outline.setdefault("target_units", row["target_units"])
         return GenerationJobDetail(**(row | {
+            "scope_mismatch": self.has_scope_conflict(row),
             "completed_units": completed, "storyboard_units": storyboard_count, "batches": batches,
-            "outline": json.loads(row["outline"]) if row["outline"] else None,
+            "outline": outline,
             "final_review": json.loads(row["final_review"]) if row["final_review"] else None,
             "progress": progress[0] if progress else None,
         }))
 
     def list(self, project_id: str, conversation_id: str | None = None) -> list[GenerationJobRecord]:
         with self.connect() as db:
-            fields = [name for name in GenerationJobRecord.model_fields if name not in {"completed_units", "storyboard_units"}]
+            fields = [name for name in GenerationJobRecord.model_fields if name not in {"completed_units", "storyboard_units", "scope_mismatch"}]
             # History needs immutable briefs, not full plans, skills or page payloads.
-            sql = f"""SELECT {','.join('j.' + name for name in fields)},
+            sql = f"""SELECT {','.join('j.' + name for name in fields)},j.outline,
                 COALESCE((SELECT SUM(end_unit-start_unit+1) FROM generation_batches b
                     WHERE b.job_id=j.id AND b.status='completed'), 0) AS completed_units,
                 (SELECT COUNT(*) FROM generation_units u
@@ -220,7 +238,12 @@ class JobRepository:
             # Never silently drop confirmed cards after the thirtieth version.
             sql += " ORDER BY j.created_at DESC, j.id DESC" + ("" if conversation_id else " LIMIT 30")
             rows = db.execute(sql, args).fetchall()
-        return [GenerationJobRecord(**dict(row)) for row in rows]
+        return [GenerationJobRecord(**(dict(row) | {"scope_mismatch": self.has_scope_conflict(row)})) for row in rows]
+
+    @staticmethod
+    def require_consistent_scope(row: sqlite3.Row) -> None:
+        if JobRepository.has_scope_conflict(row):
+            raise HTTPException(409, "旧版本的文字要求与交付数量不一致，请重新确认需求并保存新版本；原提纲和用量保留。")
 
     def units(self, job_id: str, kind: str, offset: int, limit: int) -> list[ArtifactUnit]:
         with self.connect() as db:
@@ -241,6 +264,11 @@ class JobRepository:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM generation_jobs WHERE status='queued' OR (status='running' AND lease_until<?) ORDER BY created_at LIMIT 1", (now,)).fetchone()
             if row is None:
+                return None
+            if self.has_scope_conflict(row):
+                db.execute("UPDATE generation_jobs SET status='failed',failure_kind='workflow',error=?,lease_id=NULL,lease_until=NULL,updated_at=? WHERE id=?",
+                           ("需求范围不一致，请重新确认需求。", timestamp(), row["id"]))
+                self.event(db, row["id"], "failure", "需求范围需要重新确认；原有资料与成果保留。")
                 return None
             lease_id = str(uuid4())
             db.execute("UPDATE generation_jobs SET status='running',lease_id=?,lease_until=?,updated_at=? WHERE id=?",
@@ -283,6 +311,8 @@ class JobRepository:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = self.require(db, job_id)
+            if action != "cancel":
+                self.require_consistent_scope(row)
             if action == "cancel":
                 if row["status"] in {"completed", "cancelled"}:
                     return self.detail(job_id)
@@ -296,7 +326,7 @@ class JobRepository:
                 if row["status"] != "failed":
                     raise HTTPException(409, "Only failed jobs can be retried; review failures need human changes.")
                 if row["model_calls"] >= row["max_model_calls"] or row["total_tokens"] >= row["max_total_tokens"]:
-                    raise HTTPException(409, "Job budget exhausted. Create a new job with a revised budget.")
+                    raise HTTPException(409, "本次任务达到运行上限，请使用运行设置继续已有任务。")
                 new_status, stage = "queued", row["stage"]
             else:
                 raise HTTPException(422, "Unknown job action.")
@@ -306,11 +336,15 @@ class JobRepository:
         return self.detail(job_id)
 
     def continue_with_budget(self, job_id: str, calls: int, tokens: int) -> GenerationJobDetail:
-        if type(calls) is not int or type(tokens) is not int or not 1 <= calls <= 1000 or not 1000 <= tokens <= 10_000_000:
-            raise HTTPException(422, "上限范围：1–1000 次调用，1000–10000000 累计 tokens。")
+        # The same validated hyperparameters govern creation, revisions and resume.
+        try:
+            RunLimits(max_model_calls=calls, max_total_tokens=tokens)
+        except ValueError:
+            raise HTTPException(422, "请提供有效的运行设置。")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = self.require(db, job_id)
+            self.require_consistent_scope(row)
             if row["status"] != "failed" or calls <= row["model_calls"] or tokens <= row["total_tokens"]:
                 raise HTTPException(409, "只能继续失败任务，且批准的总上限必须高于已用量。")
             db.execute("UPDATE generation_jobs SET max_model_calls=?,max_total_tokens=?,status='queued',error=NULL,failure_kind=NULL,lease_id=NULL,lease_until=NULL,updated_at=? WHERE id=?", (calls, tokens, timestamp(), job_id))
@@ -321,6 +355,7 @@ class JobRepository:
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = self.leased(db, job_id, lease_id)
+            self.require_consistent_scope(row)
             if db.execute("SELECT 1 FROM generation_calls WHERE job_id=? AND call_id=?", (job_id, usage.call_id)).fetchone():
                 return
             if row["model_calls"] >= row["max_model_calls"] or row["total_tokens"] >= row["max_total_tokens"]:
@@ -354,16 +389,13 @@ class JobRepository:
                 if stage != "planning" or checkpoint.plan is None:
                     raise HTTPException(409, "Job is not planning.")
                 plan = checkpoint.plan
+                self.require_consistent_scope(row)
+                scope_error = plan_scope_error(plan.model_dump(), row["module"], row["target_units"])
+                if scope_error:
+                    raise HTTPException(422, scope_error)
                 slugs = {skill["slug"] for skill in json.loads(row["skills"])}
                 if plan.skill_slug not in slugs:
                     raise HTTPException(422, "Select a skill from this job's catalog.")
-                expected = 1
-                for section in plan.sections:
-                    if section.start_unit != expected or section.end_unit < section.start_unit:
-                        raise HTTPException(422, "Plan must cover every unit once, in order.")
-                    expected = section.end_unit + 1
-                if expected != row["target_units"] + 1:
-                    raise HTTPException(422, "Plan must match the requested target.")
                 db.execute("UPDATE generation_jobs SET outline=? WHERE id=?", (plan.model_dump_json(), job_id))
                 state = "waiting_outline"
             elif checkpoint.action in {"storyboard", "draft"}:

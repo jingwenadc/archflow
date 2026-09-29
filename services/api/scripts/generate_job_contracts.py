@@ -41,7 +41,7 @@ def resolve(schema: dict, definitions: dict) -> dict:
 
 root = Path(__file__).resolve().parents[3]
 definitions = {}
-names = ["GenerationJobCreate", "GenerationJobRecord", "GenerationJobDetail", "ClaimedJob", "JobCheckpoint", "UsageRecord", "GenerationJobEvent", "WorkerProgress"]
+names = ["GenerationJobCreate", "GenerationJobRecord", "GenerationJobDetail", "ClaimedJob", "JobCheckpoint", "UsageRecord", "GenerationJobEvent", "WorkerProgress", "RunLimits", "RequirementDraft", "ResolvedRequirement"]
 for name in names:
     schema = getattr(models, name).model_json_schema()
     definitions.update(schema.pop("$defs", {}))
@@ -52,4 +52,5 @@ schemas = {name: resolve(definitions[name], definitions) for name in ["DocumentP
 for target in ["services/agent/src/contracts.ts", "apps/web/lib/job-contracts.ts"]:
     path = root / target
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(types + ("\nexport const schemas = " + json.dumps(schemas, ensure_ascii=False) + ";\n" if "agent" in target else ""))
+    constants = "\nexport const schemas = " + json.dumps(schemas, ensure_ascii=False) + ";\n" if "agent" in target else "\nexport const runLimitsSchema = " + json.dumps(definitions["RunLimits"], ensure_ascii=False) + " as const;\n"
+    path.write_text(types + constants)

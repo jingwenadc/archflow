@@ -1,6 +1,8 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from .requirements import scope_mismatch
 
 
 class CapabilitySet(BaseModel):
@@ -127,6 +129,30 @@ JobModule = Literal["concept", "bid", "drawing"]
 JobStatus = Literal["queued", "running", "waiting_outline", "waiting_storyboard", "needs_review", "completed", "failed", "cancelled"]
 JobStage = Literal["planning", "storyboarding", "generating", "final_review"]
 
+CallLimit = Annotated[int, Field(strict=True, ge=1, le=100_000)]
+TokenLimit = Annotated[int, Field(strict=True, ge=1000, le=1_000_000_000)]
+
+
+class RunLimits(BaseModel):
+    max_model_calls: CallLimit
+    max_total_tokens: TokenLimit
+
+
+DEFAULT_RUN_LIMITS = RunLimits(max_model_calls=20_000, max_total_tokens=100_000_000)
+
+
+class RequirementDraft(BaseModel):
+    module: JobModule
+    goal: str = Field(max_length=20_000)
+    base_goal: str = Field(default="", max_length=20_000)
+    fallback_units: int = Field(default=10, ge=1, le=500)
+
+
+class ResolvedRequirement(BaseModel):
+    target_units: int
+    requested_units: int | None
+    count_override: bool
+
 
 class GenerationJobCreate(BaseModel):
     project_id: str = Field(min_length=1, max_length=100)
@@ -136,8 +162,15 @@ class GenerationJobCreate(BaseModel):
     target_units: int = Field(ge=1, le=500)
     batch_size: int = Field(default=5, ge=1, le=10)
     max_revision_rounds: int = Field(default=2, ge=0, le=3)
-    max_model_calls: int = Field(default=400, ge=1, le=1000)
-    max_total_tokens: int = Field(default=250_000, ge=1000, le=10_000_000)
+    count_override: bool = False
+    max_model_calls: CallLimit | None = None
+    max_total_tokens: TokenLimit | None = None
+
+    @model_validator(mode="after")
+    def validate_scope(self):
+        if scope_mismatch(self.goal, self.module, self.target_units, self.count_override):
+            raise ValueError("文字要求与交付数量不一致，请重新确认数量，或明确使用手动设置的数量。")
+        return self
 
     @field_validator("goal")
     @classmethod
@@ -150,15 +183,16 @@ class GenerationJobCreate(BaseModel):
 
 class PlanSection(BaseModel):
     title: str = Field(min_length=1, max_length=200)
-    start_unit: int = Field(ge=1, le=500)
-    end_unit: int = Field(ge=1, le=500)
+    start_unit: int = Field(ge=1, le=500, description="Inclusive actual slide/chapter index, not the outline section number.")
+    end_unit: int = Field(ge=1, le=500, description="Inclusive actual slide/chapter index; a section may span many units.")
     objective: str = Field(min_length=1, max_length=2000)
 
 
 class DocumentPlan(BaseModel):
     skill_slug: str = Field(min_length=1, max_length=100)
-    summary: str = Field(min_length=1, max_length=4000)
+    summary: str = Field(min_length=1, max_length=4000, description="Project and design strategy summary. Scope is declared separately in target_units; do not propose a different length or narrate workflow/approval instructions.")
     sections: list[PlanSection] = Field(min_length=1, max_length=30)
+    target_units: int = Field(ge=1, le=500, description="Must equal the user's confirmed deliverable length, not len(sections).")
 
 
 class ArtifactUnit(BaseModel):
@@ -226,6 +260,8 @@ class GenerationJobRecord(BaseModel):
     module: JobModule
     goal: str
     target_units: int
+    count_override: bool = False
+    scope_mismatch: bool = False
     batch_size: int
     max_revision_rounds: int
     status: JobStatus

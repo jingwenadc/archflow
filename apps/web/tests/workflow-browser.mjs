@@ -17,6 +17,7 @@ const messages = [{ id: "m1", conversation_id: conversation.id, role: "user", co
 const jobs = [];
 const writes = [];
 let unexpected = [];
+let limits = { max_model_calls: 20000, max_total_tokens: 100000000 };
 
 function makeJob(body) {
   const date = timestamp();
@@ -38,6 +39,7 @@ await context.route(/\/api\/v1\//, async route => {
     if (path.endsWith("/messages")) return reply(messages);
     if (path === "/api/v1/files") return reply([]);
     if (path === "/api/v1/capabilities") return reply({ generation: true });
+    if (path === "/api/v1/settings/run-limits") return reply(limits);
     if (path === "/api/v1/jobs") return reply([...jobs].reverse());
     if (path.endsWith("/units")) return reply([]);
     if (path.endsWith("/export")) return reply({ status: "not_requested", requested: false, result: null, error: null });
@@ -45,6 +47,15 @@ await context.route(/\/api\/v1\//, async route => {
     if (match) return reply(jobs.find(job => job.id === match[1]));
   }
   if (method === "POST") {
+    if (path === "/api/v1/requirements/resolve") {
+      const body = request.postDataJSON();
+      const additions = body.base_goal && body.goal.startsWith(body.base_goal) ? body.goal.slice(body.base_goal.length) : body.goal;
+      const count = text => [...text.matchAll(/(?<!第)(\d+)页/gu)].at(-1)?.[1];
+      const target = Number(count(additions) ?? body.fallback_units);
+      const requested = count(body.goal) === undefined ? null : Number(count(body.goal));
+      return reply({ target_units: target, requested_units: requested, count_override: requested !== null && requested !== target });
+    }
+    if (path === "/api/v1/settings/run-limits") { limits = request.postDataJSON(); return reply(limits); }
     writes.push(path);
     if (path.endsWith("/messages")) {
       const content = request.postDataJSON().content;
@@ -72,12 +83,27 @@ await page.goto(base);
 const thread = page.locator(".chat-thread");
 const pending = page.getByRole("region", { name: "需求确认", exact: true });
 await pending.waitFor();
+await page.getByRole("button", { name: "运行设置", exact: true }).click();
+const settingsDialog = page.getByRole("dialog", { name: "运行设置", exact: true });
+assert.equal(await settingsDialog.getByRole("spinbutton", { name: "每个任务的累计 token 上限", exact: true }).inputValue(), "100000000");
+await settingsDialog.getByRole("spinbutton", { name: "每个任务的累计 token 上限", exact: true }).fill("200000000");
+await settingsDialog.getByRole("spinbutton", { name: "每个任务的模型调用上限", exact: true }).fill("30000");
+await settingsDialog.getByRole("button", { name: "保存设置", exact: true }).click();
+await settingsDialog.waitFor({ state: "hidden" });
+assert.equal(jobs.length, 0, "Settings must never start a task");
+assert.equal(await pending.getByText("运行上限与费用控制", { exact: true }).count(), 0);
+await pending.getByRole("textbox", { name: "需求摘要", exact: true }).fill("第一版：面向甲方，简约风格，10页。");
+await pending.getByRole("textbox", { name: "需求摘要", exact: true }).fill("第一版：面向甲方，简约风格，47页。");
+await page.waitForFunction(() => document.querySelector('.pending-requirement input[type="number"]')?.value === "47");
+await pending.getByRole("spinbutton", { name: "预计页数", exact: true }).fill("23");
+assert.match(await pending.innerText(), /本次以此处确认的 23 页为准/);
 await pending.getByRole("textbox", { name: "需求摘要", exact: true }).fill("第一版：面向甲方，简约风格，10页。");
 const textarea = pending.getByRole("textbox", { name: "需求摘要", exact: true });
 assert.equal(await textarea.evaluate(element => getComputedStyle(element).resize), "vertical");
 const beforeWidth = await textarea.evaluate(element => element.getBoundingClientRect().width);
 await textarea.evaluate(element => { element.style.height = "240px"; });
 assert.equal(await textarea.evaluate(element => element.getBoundingClientRect().width), beforeWidth);
+await page.waitForFunction(() => !document.querySelector(".pending-requirement > button:last-of-type")?.disabled);
 await pending.getByRole("button", { name: "确认需求，整理提纲", exact: true }).click();
 const v1Card = page.getByRole("region", { name: "已确认需求 V1", exact: true });
 await v1Card.waitFor();
@@ -92,6 +118,7 @@ await page.locator(".output-panel").getByText("第一版素材预览", { exact: 
 await page.getByPlaceholder("描述需求、补充条件或修改指定页…").fill("10页太少了，做40页ppt");
 await page.getByRole("button", { name: "发送消息", exact: true }).click();
 await pending.waitFor();
+await page.waitForFunction(() => document.querySelector('.pending-requirement input[type="number"]')?.value === "40");
 assert.equal(await pending.getByRole("spinbutton", { name: "预计页数", exact: true }).inputValue(), "40");
 assert.match(await textarea.inputValue(), /面向甲方/);
 assert.equal(await v1Card.getByRole("button", { name: /批准.*提纲/ }).count(), 0);
@@ -102,6 +129,8 @@ await pending.getByRole("button", { name: "确认 40 页需求，生成新版本
 const v2Card = page.getByRole("region", { name: "已确认需求 V2", exact: true });
 await v2Card.waitFor();
 assert.equal(jobs[1].target_units, 40);
+assert.equal(jobs[1].max_total_tokens, 200000000);
+assert.equal(jobs[1].max_model_calls, 30000);
 assert.match(jobs[1].goal, /面向甲方/);
 const selector = page.locator(".output-panel").getByLabel("成果版本", { exact: true });
 assert.equal(await selector.inputValue(), "v1");
@@ -131,13 +160,27 @@ assert.match(await v2Card.innerText(), /40 页/);
 await page.getByPlaceholder("描述需求、补充条件或修改指定页…").fill("修改第3页的配色");
 await page.getByRole("button", { name: "发送消息", exact: true }).click();
 await pending.waitFor();
+await page.waitForFunction(() => document.querySelector('.pending-requirement input[type="number"]')?.value === "40");
 assert.equal(await pending.getByRole("spinbutton", { name: "预计页数", exact: true }).inputValue(), "40");
 assert.equal(await pending.getByRole("button", { name: "确认 40 页需求，生成新版本提纲", exact: true }).isDisabled(), true);
 // Recovery follows the structured failure category, never words in diagnostic text.
-jobs[1].status = "failed"; jobs[1].failure_kind = "context"; jobs[1].error = "Opaque provider diagnostic"; jobs[1].updated_at = timestamp();
+jobs[1].status = "failed"; jobs[1].stage = "storyboarding"; jobs[1].outline = { summary: "第二版提纲", sections: [] }; jobs[1].failure_kind = "context"; jobs[1].error = "Opaque provider diagnostic"; jobs[1].updated_at = timestamp();
 await v2Card.getByText("当前上下文未能整理完成。可以从检查点继续；若重复失败，需要检查模型窗口或减少单次输入，而不是提高累计预算。", { exact: true }).waitFor();
 assert.equal(await v2Card.getByText("Opaque provider diagnostic", { exact: true }).isVisible(), false);
 assert.equal(await v2Card.getByRole("button", { name: "批准新上限并继续", exact: true }).count(), 0);
+await v2Card.getByText("章节提纲已完成；逐页策划已暂停", { exact: true }).waitFor();
+assert.equal(await v2Card.getByText("逐页策划尚未保存", { exact: true }).count(), 1);
+// Scope conflicts in old records require explicit reconfirmation, never a silent rewrite.
+jobs[1].target_units = 10; jobs[1].scope_mismatch = true; jobs[1].updated_at = timestamp();
+await page.reload();
+await pending.waitFor();
+await page.waitForFunction(() => document.querySelector('.pending-requirement input[type="number"]')?.value === "40");
+assert.equal(await v2Card.getByRole("button", { name: "按顶部运行设置继续", exact: true }).count(), 0);
+assert.equal(jobs[1].target_units, 10);
+await page.getByRole("button", { name: "运行设置", exact: true }).click();
+assert.equal(await settingsDialog.getByRole("spinbutton", { name: "每个任务的累计 token 上限", exact: true }).inputValue(), "200000000");
+await page.keyboard.press("Escape");
+await settingsDialog.waitFor({ state: "hidden" });
 await page.screenshot({ path: process.env.ARCHFLOW_TEST_SCREENSHOT ?? "/tmp/archflow-workflow-history.png", fullPage: true });
 assert.deepEqual(unexpected, []);
 assert.deepEqual(errors, []);

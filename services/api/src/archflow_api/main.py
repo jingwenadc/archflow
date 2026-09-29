@@ -22,7 +22,10 @@ from .models import (
     ProjectRecord,
     SkillDetail,
     SkillSummary,
+    RunLimits, RequirementDraft, ResolvedRequirement,
 )
+from .run_settings import RunSettingsRepository
+from .requirements import requested_unit_count
 from .project_repository import ProjectRepository
 from .skill_repository import SkillRepository
 from .storage import LocalFileStorage
@@ -54,6 +57,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     projects = ProjectRepository(resolved.project_dir)
     conversations = ConversationRepository(resolved.database_path)
     documents = DocumentRepository(resolved.database_path)
+    run_settings = RunSettingsRepository(resolved.database_path)
     skill_repository = SkillRepository(resolved.repository_root, SKILLS)
     pull_requests = GitHubDraftPullRequests(
         resolved.github_repository,
@@ -74,6 +78,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/api/v1/settings/run-limits", response_model=RunLimits)
+    def get_run_limits() -> RunLimits:
+        return run_settings.get()
+
+    @app.post("/api/v1/settings/run-limits", response_model=RunLimits)
+    def save_run_limits(request: RunLimits) -> RunLimits:
+        return run_settings.save(request)
+
+    @app.post("/api/v1/requirements/resolve", response_model=ResolvedRequirement)
+    def resolve_requirement(request: RequirementDraft) -> ResolvedRequirement:
+        # An already confirmed brief does not undo an explicit manual count.
+        additions = request.goal[len(request.base_goal):] if request.base_goal and request.goal.startswith(request.base_goal) else request.goal
+        target = requested_unit_count(additions, request.module)
+        requested = requested_unit_count(request.goal, request.module)
+        target = request.fallback_units if target is None else target
+        return ResolvedRequirement(target_units=target, requested_units=requested,
+                                   count_override=requested is not None and requested != target)
 
     @app.get("/api/v1/capabilities", response_model=CapabilitySet)
     def capabilities() -> CapabilitySet:
@@ -133,7 +155,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         elif current and current.status in {"waiting_outline", "waiting_storyboard"}:
             reply = "已保存新的要求。请在下方确认新版本需求，再重新整理提纲；旧版需求与成果都会保留。右侧可独立切换成果版本，我不会把补充消息当作批准。"
         else:
-            reply = "已收到你的要求。项目资料会在这些对话中共享。请先在下方确认需求摘要、页数与运行上限，确认后才会开始整理提纲；你也可以继续补充受众、风格或重点，无需重复上传。"
+            unit = "页数" if conversation.module == "concept" else "章节数"
+            reply = f"已收到你的要求。项目资料会在这些对话中共享。请先在下方确认需求摘要与{unit}，确认后开始整理提纲；你也可以继续补充受众、风格或重点，无需重复上传。"
         conversations.assistant(conversation_id, reply, reply_to=message.id)
         return message
 

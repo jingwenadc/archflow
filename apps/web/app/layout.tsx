@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { RunSettingsProvider } from "@/components/run-settings";
 
 export const metadata: Metadata = {
   title: "图策 ArchFlow｜建筑设计智能工作台",
@@ -9,7 +10,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN">
-      <body>{children}</body>
+      <body><RunSettingsProvider>{children}</RunSettingsProvider></body>
     </html>
   );
 }

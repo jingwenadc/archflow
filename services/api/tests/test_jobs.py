@@ -19,7 +19,7 @@ def create(repo, units=8, module="concept", **kwargs):
 
 
 def save_plan(repo, claim):
-    return repo.checkpoint(claim.job.id, claim.lease_id, JobCheckpoint(action="plan", plan=DocumentPlan(skill_slug=SKILLS[0].slug, summary="需人工批准", sections=[PlanSection(title="项目分析", start_unit=1, end_unit=claim.job.target_units, objective="仅使用确认资料")])))
+    return repo.checkpoint(claim.job.id, claim.lease_id, JobCheckpoint(action="plan", plan=DocumentPlan(skill_slug=SKILLS[0].slug, summary="需人工批准", target_units=claim.job.target_units, sections=[PlanSection(title="项目分析", start_unit=1, end_unit=claim.job.target_units, objective="仅使用确认资料")])))
 
 
 def unit_batch(start, end):

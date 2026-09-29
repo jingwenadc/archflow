@@ -29,6 +29,7 @@ export type DocumentPlan = {
   skill_slug: string;
   summary: string;
   sections: Array<PlanSection>;
+  target_units: number;
 };
 
 export type GenerationBatchRecord = {
@@ -48,8 +49,9 @@ export type GenerationJobCreate = {
   target_units: number;
   batch_size?: number;
   max_revision_rounds?: number;
-  max_model_calls?: number;
-  max_total_tokens?: number;
+  count_override?: boolean;
+  max_model_calls?: number | null;
+  max_total_tokens?: number | null;
 };
 
 export type GenerationJobDetail = {
@@ -59,6 +61,8 @@ export type GenerationJobDetail = {
   module: "concept" | "bid" | "drawing";
   goal: string;
   target_units: number;
+  count_override?: boolean;
+  scope_mismatch?: boolean;
   batch_size: number;
   max_revision_rounds: number;
   status: "queued" | "running" | "waiting_outline" | "waiting_storyboard" | "needs_review" | "completed" | "failed" | "cancelled";
@@ -96,6 +100,8 @@ export type GenerationJobRecord = {
   module: "concept" | "bid" | "drawing";
   goal: string;
   target_units: number;
+  count_override?: boolean;
+  scope_mismatch?: boolean;
   batch_size: number;
   max_revision_rounds: number;
   status: "queued" | "running" | "waiting_outline" | "waiting_storyboard" | "needs_review" | "completed" | "failed" | "cancelled";
@@ -130,10 +136,28 @@ export type PlanSection = {
   objective: string;
 };
 
+export type RequirementDraft = {
+  module: "concept" | "bid" | "drawing";
+  goal: string;
+  base_goal?: string;
+  fallback_units?: number;
+};
+
+export type ResolvedRequirement = {
+  target_units: number;
+  requested_units: number | null;
+  count_override: boolean;
+};
+
 export type ReviewResult = {
   passed: boolean;
   summary: string;
   issues: Array<string>;
+};
+
+export type RunLimits = {
+  max_model_calls: number;
+  max_total_tokens: number;
 };
 
 export type SkillSnapshot = {
@@ -157,3 +181,5 @@ export type WorkerProgress = {
   step: "skills" | "materials" | "planning" | "storyboarding" | "generating" | "reviewing" | "compacting" | "continuing";
   memory?: AgentMemory | null;
 };
+
+export const runLimitsSchema = {"properties": {"max_model_calls": {"maximum": 100000, "minimum": 1, "title": "Max Model Calls", "type": "integer"}, "max_total_tokens": {"maximum": 1000000000, "minimum": 1000, "title": "Max Total Tokens", "type": "integer"}}, "required": ["max_model_calls", "max_total_tokens"], "title": "RunLimits", "type": "object"} as const;

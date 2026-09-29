@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const source = await readFile(new URL("../lib/workflow.ts", import.meta.url), "utf8");
 const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
-const { requestedUnitCount, requirementBrief, conversationTimeline, orderedJobs, workflowState, workflowSteps, failureHelp } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+const { requirementBrief, conversationTimeline, orderedJobs, workflowState, workflowSteps, failureHelp } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
 
 test("progress reflects the actual stage; context failures never suggest buying more budget", () => {
   const job = { module: "concept", stage: "planning", status: "running", completed_units: 0, storyboard_units: 0, target_units: 17, total_tokens: 3700, max_total_tokens: 10000, model_calls: 3, max_model_calls: 50, failure_kind: "context", error: "arbitrary diagnostic text" };
@@ -27,21 +27,16 @@ test("progress reflects the actual stage; context failures never suggest buying 
   }
 });
 
-test("latest requested length wins; page references and rejected lengths do not", () => {
-  for (const [text, count] of [
-    ["10页太少了，做40页ppt", 40], ["10页40页", 40], ["制作100页PPT", 100],
-    ["做40页，修改第10页", 40], ["做40页，不要10页", 40], ["修改第 10 页", undefined],
-    ["修改3-5页", undefined], ["第3至5页", undefined], ["强调设计风格", undefined], ["做600页", 600],
-    ["Create 27 slides", 27], ["Prepare 135 pages, not 10 pages", 135], ["Edit slide 3", undefined],
-  ]) assert.equal(requestedUnitCount(text), count, text);
-  for (let count = 1; count <= 500; count++) {
-    assert.equal(requestedUnitCount(`制作${count}页演示`), count);
-    assert.equal(requestedUnitCount(`Create ${count} slides`), count);
-    assert.equal(requestedUnitCount(`编制${count}章节`, "bid"), count);
-    assert.equal(requestedUnitCount(`Prepare ${count} chapters`, "bid"), count);
+test("paused progress preserves completed outline and distinguishes unsaved storyboard", () => {
+  for (const module of ["concept", "bid"]) {
+    const job = { module, stage: "storyboarding", status: "failed", target_units: 57, storyboard_units: 0 };
+    assert.match(workflowState(job).label, /章节提纲已完成/);
+    assert.equal(workflowState(job).saved, `${module === "concept" ? "逐页" : "逐章"}策划尚未保存`);
+    assert.match(workflowState({ ...job, storyboard_units: 15 }).saved, /已保存 15 \/ 57/);
+    assert.match(workflowState({ ...job, scope_mismatch: true }).label, /重新确认需求/);
+    assert.equal(workflowState({ ...job, stage: "generating", status: "needs_review" }).index, 3, "Unresolved reviews must not appear completed");
+    assert.equal(workflowState({ ...job, stage: "planning", status: "cancelled", outline: {} }).index, 1, "Saved outlines survive cancellation");
   }
-  assert.equal(requestedUnitCount("修改第 7 章", "bid"), undefined);
-  assert.equal(requestedUnitCount("编制100页投标文件", "bid"), undefined, "Word page count is not a chapter count");
 });
 
 test("long requirements never silently discard the confirmed brief", () => {

@@ -8,7 +8,6 @@ export function WorkflowProgress({ job }: { job: GenerationJobDetail }) {
       className={index < state.index ? "done" : index === state.index ? "current" : ""}
       aria-current={index === state.index ? "step" : undefined}><span>{index < state.index ? "✓" : index + 1}</span>{label}</li>)}</ol>
     <p role="status">{state.label}</p>
-    {["generating", "final_review"].includes(job.stage) && <p className="generation-note">{job.completed_units} / {job.target_units} {job.module === "concept" ? "页" : "章"}已通过内容审校</p>}
-    {job.stage === "storyboarding" && <p className="generation-note">{job.storyboard_units} / {job.target_units} {job.module === "concept" ? "页" : "章"}已完成策划</p>}
+    {state.saved && <p className="generation-note">{state.saved}</p>}
   </div>;
 }
