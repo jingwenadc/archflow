@@ -43,13 +43,20 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
   const current = jobs.find(job => job.id === selectedId);
   const latest = versions.at(-1);
   const version = versions.findIndex(job => job.id === selectedId) + 1;
-  const kind = textKind ?? (current?.stage === "storyboarding" || current?.status === "waiting_storyboard" || (!current?.completed_units && !!current?.storyboard_units) ? "storyboard" : "draft");
-  const savedUnits = kind === "storyboard" ? detail?.storyboard_units ?? 0 : detail?.completed_units ?? 0;
+  const hasDraft = !!detail && (detail.completed_units > 0 || detail.batches.some(batch => batch.draft_count > 0));
+  const stage = detail?.stage ?? current?.stage;
+  const status = detail?.status ?? current?.status;
+  const kind = textKind ?? (stage === "storyboarding" || status === "waiting_storyboard" || (!hasDraft && !(detail?.completed_units ?? current?.completed_units) && !!(detail?.storyboard_units ?? current?.storyboard_units)) ? "storyboard" : "draft");
+  const savedDraftUnits = detail?.batches.reduce((count, batch) => count + (batch.draft_count > 0 || batch.status === "completed" ? batch.end_unit - batch.start_unit + 1 : 0), 0) ?? 0;
+  const savedUnits = kind === "storyboard" ? detail?.storyboard_units ?? 0 : Math.max(detail?.completed_units ?? 0, savedDraftUnits);
   const latestGroup = Math.max(0, Math.ceil(savedUnits / 5) - 1);
   const live = detail?.status === "running" && detail.stage === (kind === "storyboard" ? "storyboarding" : "generating");
   const latestLive = latest?.status === "running" && ["storyboarding", "generating"].includes(latest.stage);
   const latestSaved = latest?.stage === "storyboarding" ? latest.storyboard_units : latest?.completed_units ?? 0;
   const unitLabel = detail?.module === "concept" ? "页" : "章";
+  const hasPreview = exported?.status === "ready" && !!exported.result;
+  const activePhase = hasPreview && !textView ? "preview" : kind;
+  const planningLabel = detail?.module === "bid" ? "逐章策划" : "逐页策划";
   const pending = (selectedId ? reviews.records[selectedId]?.comments ?? [] : []).filter(item => !item.submitted_job_id);
   useEffect(() => { onAnnotationEditing(editing || saving); return () => onAnnotationEditing(false); }, [editing, saving, onAnnotationEditing]);
   useEffect(() => { if (selectedId) void reviews.load(selectedId); }, [selectedId, reviews.load]);
@@ -145,19 +152,25 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
         {live && <div className="live-output-status" role="status" aria-live="polite"><LoadingIcon className="loading-icon" /><div><strong>V{version} {kind === "storyboard" ? "策划草稿" : "内容草稿"}持续更新中</strong><span>已保存 {savedUnits} / {detail.target_units} {unitLabel}；每批保存后显示，尚未完成审阅或排版。</span></div>{savedUnits > 5 && !followLatest && <button onClick={() => { setFollowLatest(true); setPage(latestGroup); }}>跟随最新</button>}</div>}
         <div ref={contentRoot} onPointerUp={captureSelection} onKeyUp={captureSelection}>
         {detail.outline && <details open={!exported?.result}><summary>章节提纲 · V{version}</summary><p className="generation-note">{detail.outline.sections.length} 个{detail.module === "concept" ? "章节" : "分组"} · 已确认交付 {detail.target_units} {detail.module === "concept" ? "页" : "章"}</p><p data-review-kind="outline" data-review-index={0}>{show(detail.outline.summary)}</p><ol>{detail.outline.sections.map((section, index) => <li key={section.start_unit} data-review-kind="outline" data-review-index={index + 1}><strong><span data-review-exclude>第{section.start_unit === section.end_unit ? section.start_unit : `${section.start_unit}–${section.end_unit}`}{detail.module === "concept" ? "页" : "章"} · </span>{show(section.title)}</strong>{"\n"}<p>{show(section.objective)}</p></li>)}</ol></details>}
+        {detail.storyboard_units > 0 && <nav className="artifact-phase-nav" aria-label="成果制作步骤">
+          <ol>
+            <li><button type="button" aria-pressed={activePhase === "storyboard"} disabled={editing} onClick={() => { setTextView(true); setTextKind("storyboard"); setFollowLatest(false); setPage(0); }}><span>1</span>{planningLabel}</button></li>
+            <li><button type="button" aria-pressed={activePhase === "draft"} disabled={!hasDraft || editing} onClick={() => { setTextView(true); setTextKind("draft"); setFollowLatest(false); setPage(0); }}><span>2</span>正文</button></li>
+            <li><button type="button" aria-pressed={activePhase === "preview"} disabled={!hasPreview || editing} onClick={() => { setTextView(false); setPage(0); }}><span>3</span>页面预览</button></li>
+          </ol>
+          <p>{activePhase === "storyboard" ? "先确定每页讲什么、依据什么资料；这是内部策划，不会直接排进交付文件。" : activePhase === "draft" ? "再写给读者看的正文；审校后用于可编辑文件。" : "最后检查实际排版并下载可编辑文件。"}</p>
+        </nav>}
         {exported?.requested && ["queued", "processing"].includes(exported.status) && <p role="status">正在排版和渲染可编辑文件…</p>}
         {exported?.status === "failed" && <div role="alert"><p>{exported.error}</p><button onClick={() => void requestExport(`/api/v1/jobs/${selectedId}/export/retry`)}>重试排版</button></div>}
         {["completed", "needs_review"].includes(detail.status) && exported && !exported.requested && <button onClick={() => void requestExport(`/api/v1/jobs/${selectedId}/export`)}>排版为可编辑审阅文件</button>}
         {exported?.status === "ready" && exported.result && <>
           <div className="generation-actions"><a href={url(`/api/v1/jobs/${selectedId}/export/${exported.result.format}`)}>下载 {exported.result.format.toUpperCase()}</a><a href={url(`/api/v1/jobs/${selectedId}/export/pdf`)}>下载 PDF</a></div>
           <p className="generation-note">{exported.result.page_count} 页 · 可编辑审阅版{exported.result.missing_facts ? ` · ${exported.result.missing_facts} 项资料待补充` : ""}</p>
-          <div className="generation-actions"><button aria-pressed={!textView} disabled={editing} onClick={() => { setTextView(false); setPage(0); }}>页面预览</button><button aria-pressed={textView} disabled={editing} onClick={() => { setTextView(true); setPage(0); }}>文字审阅与批注</button></div>
           {!textView && <><img className="artifact-page" src={url(`/api/v1/jobs/${selectedId}/preview/${Math.min(page + 1, exported.result.page_count)}`)} alt={`V${version} 文档第 ${page + 1} 页`} loading="lazy" />
           <div className="generation-actions"><button disabled={page === 0 || editing} onClick={() => setPage(value => value - 1)}>上一页</button><span>{page + 1} / {exported.result.page_count}</span><button disabled={page + 1 >= exported.result.page_count || editing} onClick={() => setPage(value => value + 1)}>下一页</button></div></>}
         </>}
         {(exported?.status !== "ready" || textView) && <>
-          {detail.storyboard_units > 0 && ["generating", "final_review"].includes(detail.stage) && <label className="artifact-text-kind">审阅内容<select aria-label="审阅内容" value={kind} disabled={editing} onChange={event => { setTextKind(event.target.value as "storyboard" | "draft"); setFollowLatest(false); setPage(0); }}><option value="draft">正文</option><option value="storyboard">内容策划</option></select></label>}
-          {units.map(unit => <article className="generation-unit" key={unit.unit_index}><p className="eyebrow">{kind === "storyboard" ? detail.module === "concept" ? "逐页策划" : "逐章策划" : "内容草稿"} · {unit.unit_index}</p><div data-review-kind={kind} data-review-index={unit.unit_index}><h3>{show(unit.title)}</h3>{"\n"}<p className="generation-body">{show(unit.body)}</p></div>{unit.missing_facts.length > 0 && <details className="unit-verification"><summary>资料缺口与后续核验 · {unit.missing_facts.length} 项</summary><p>不必逐项填写才能继续；对外提交前请核对影响关键结论的内容。</p><ul>{unit.missing_facts.map((fact, index) => <li key={index}>{show(fact)}</li>)}</ul></details>}</article>)}
+          {units.map(unit => <article className="generation-unit" key={unit.unit_index}><p className="eyebrow">{kind === "storyboard" ? planningLabel : "正文草稿"} · {unit.unit_index}</p><div data-review-kind={kind} data-review-index={unit.unit_index}><h3>{show(unit.title)}</h3>{"\n"}<p className="generation-body">{show(unit.body)}</p></div>{unit.missing_facts.length > 0 && <details className="unit-verification"><summary>资料缺口与后续核验 · {unit.missing_facts.length} 项</summary><p>不必逐项填写才能继续；对外提交前请核对影响关键结论的内容。</p><ul>{unit.missing_facts.map((fact, index) => <li key={index}>{show(fact)}</li>)}</ul></details>}</article>)}
           {units.length > 0 && <div className="generation-actions"><button disabled={page === 0 || editing} onClick={() => { setFollowLatest(false); setPage(value => value - 1); }}>上一组</button><span>第 {page * 5 + 1} {unitLabel}起{live && followLatest ? " · 自动跟随最新" : ""}</span><button disabled={(page + 1) * 5 >= savedUnits || editing} onClick={() => { setFollowLatest(false); setPage(value => value + 1); }}>下一组</button></div>}
         </>}
         </div>

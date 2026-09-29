@@ -15,6 +15,7 @@ const jobs = [
   { ...common, id: "v2", status: "running", stage: "storyboarding", storyboard_units: 5, created_at: "2026-09-29T01:03:00Z", updated_at: "2026-09-29T01:04:00Z" },
 ];
 const units = Array.from({ length: 40 }, (_, index) => ({ unit_index: index + 1, title: `策划页 ${index + 1}`, body: `第 ${index + 1} 页的内容目标`, evidence: ["user-brief"], missing_facts: index === 0 ? ["关键尺寸尚待核验"] : [] }));
+const drafts = Array.from({ length: 5 }, (_, index) => ({ unit_index: index + 1, title: `策划页 ${index + 1}`, body: `供读者阅读的第 ${index + 1} 页正文`, evidence: ["user-brief"], missing_facts: [] }));
 const unexpected = [];
 await context.route(/\/api\/v1\//, async route => {
   const request = route.request(), url = new URL(request.url()), path = url.pathname;
@@ -29,8 +30,10 @@ await context.route(/\/api\/v1\//, async route => {
   if (path === "/api/v1/jobs") return reply([...jobs].reverse());
   if (path.endsWith("/source-citations") || path.endsWith("/comments")) return reply([]);
   const id = /\/jobs\/(v\d+)/.exec(path)?.[1];
-  if (path.endsWith("/units")) return reply(id === "v2" && url.searchParams.get("kind") === "storyboard"
-    ? units.slice(Number(url.searchParams.get("offset")), Math.min(jobs[1].storyboard_units, Number(url.searchParams.get("offset")) + 5)) : []);
+  if (path.endsWith("/units")) {
+    const source = id === "v2" && url.searchParams.get("kind") === "storyboard" ? units.slice(0, jobs[1].storyboard_units) : id === "v2" && url.searchParams.get("kind") === "draft" ? drafts.slice(0, jobs[1].batches.some(batch => batch.draft_count > 0) ? 5 : jobs[1].completed_units) : [];
+    return reply(source.slice(Number(url.searchParams.get("offset")), Number(url.searchParams.get("offset")) + 5));
+  }
   if (path.endsWith("/export")) return reply({ status: "not_requested", requested: false, result: null, error: null });
   if (/\/jobs\/v\d+$/.test(path)) return reply(jobs.find(job => job.id === id));
   unexpected.push(`GET ${path}`); return route.fulfill({ status: 500 });
@@ -60,9 +63,20 @@ try {
   await output.getByRole("button", { name: "跟随最新" }).click();
   await output.getByText("策划页 15", { exact: true }).waitFor();
   assert.equal(await output.locator(".generation-unit").first().getByRole("heading").innerText(), "策划页 11");
+  const phases = output.getByRole("navigation", { name: "成果制作步骤" });
+  assert.equal(await phases.getByRole("button", { name: "2 正文" }).isDisabled(), true);
+  jobs[1].stage = "generating"; jobs[1].storyboard_units = 40; jobs[1].batches = [{ batch_index: 0, start_unit: 1, end_unit: 5, status: "draft", draft_count: 1 }]; jobs[1].updated_at = "2026-09-29T01:07:00Z";
+  await phases.getByRole("button", { name: "2 正文" }).waitFor();
+  await output.getByText("供读者阅读的第 1 页正文").waitFor();
+  await output.getByText(/已保存 5 \/ 40 页/).waitFor();
+  await phases.getByRole("button", { name: "1 逐页策划" }).click();
+  await output.getByText("第 1 页的内容目标").waitFor();
+  await phases.getByRole("button", { name: "2 正文" }).click();
+  await output.getByText("供读者阅读的第 1 页正文").waitFor();
+  assert.equal(await phases.getByRole("button", { name: "3 页面预览" }).isDisabled(), true);
   assert.deepEqual(errors, []); assert.deepEqual(unexpected, []);
   if (process.env.ARCHFLOW_TEST_SCREENSHOT) await page.screenshot({ path: process.env.ARCHFLOW_TEST_SCREENSHOT });
-  console.log("PASS: live checkpoints, preserved old version, manual reading, resume follow and optional verification");
+  console.log("PASS: live checkpoints, preserved old version, manual reading, stage order and distinct planning/draft views");
 } catch (error) {
   console.error("Browser diagnostics", errors, unexpected);
   await page.screenshot({ path: "/tmp/archflow-live-output-failure.png" });

@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ApiClient } from "../client.js";
 import { processJob } from "../worker.js";
-import { readSkill, runStep, type ModelConfig } from "../runtime.js";
+import { assertDraftDistinct, readSkill, runStep, type ModelConfig } from "../runtime.js";
 import type { ArtifactUnit, ClaimedJob, GenerationJobDetail, JobCheckpoint, UsageRecord, WorkerProgress, AgentMemory } from "../contracts.js";
 import { contextOverride, modelLimits } from "../model-limits.js";
 import { WorkflowError } from "../errors.js";
@@ -92,7 +92,7 @@ async function provider(pressure = false) {
       else if (["review", "final_review"].includes(prompt.task)) {
         const failed = prompt.task === "review" && prompt.existing_units[0].body === "first draft";
         args = { passed: !failed, summary: failed ? "Revise content" : "Consistent", issues: failed ? ["Needs revision"] : [] };
-      } else args = { units: Array.from({ length: prompt.unit_range[1] - prompt.unit_range[0] + 1 }, (_, index) => ({ unit_index: prompt.unit_range[0] + index, title: `Unit ${prompt.unit_range[0] + index}`, body: prompt.task === "draft" && !prompt.previous_review ? "first draft" : "revised draft", evidence: ["user-brief"], missing_facts: [] })) };
+      } else args = { units: Array.from({ length: prompt.unit_range[1] - prompt.unit_range[0] + 1 }, (_, index) => ({ unit_index: prompt.unit_range[0] + index, title: `Unit ${prompt.unit_range[0] + index}`, body: prompt.task === "storyboard" ? "content plan" : prompt.task === "draft" && !prompt.previous_review ? "first draft" : "revised draft", evidence: ["user-brief"], missing_facts: [] })) };
     }
     if (pressure && hasRead && !inspectedLargePage) {
       name = "read_units"; args = { kind: "storyboard", offset: 0, limit: 1 }; inspectedLargePage = true;
@@ -140,7 +140,25 @@ test("Pi selects/reads skills, pauses for two approvals, iterates revisions and 
     assert.equal(api.job.total_tokens, endpoint.requests.length * 120);
     assert.ok(endpoint.requests.some(request => request.model === "review-model"));
     assert.equal(api.data.draft.length, 8);
+    const prompts = endpoint.requests.flatMap(request => request.input as Array<{ role?: string; content?: Array<{ text?: string }> }>)
+      .filter(item => item.role === "user").flatMap(item => item.content ?? []).filter(item => item.text?.startsWith('{"task"')).map(item => JSON.parse(item.text!));
+    const storyboardPrompt = prompts.find(item => item.task === "storyboard");
+    const draftPrompt = prompts.find(item => item.task === "draft");
+    const reviewPrompt = prompts.find(item => item.task === "review");
+    assert.match(storyboardPrompt.instructions, /INTERNAL PRODUCTION PLANS/);
+    assert.match(draftPrompt.instructions, /FINISHED AUDIENCE-FACING CONTENT/);
+    assert.equal(draftPrompt.storyboard_units[0].body, "content plan");
+    assert.equal(reviewPrompt.storyboard_units[0].body, "content plan");
+    assert.equal(reviewPrompt.existing_units[0].body, "first draft");
   } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
+test("draft checkpoints reject copied planning text without rejecting matching titles", () => {
+  const storyboard = [{ unit_index: 1, title: "Shared title", body: "页面目的：介绍项目背景", evidence: ["user-brief"], missing_facts: [] }];
+  const copied = [{ ...storyboard[0], body: "页面目的：介绍 项目背景" }];
+  assert.throws(() => assertDraftDistinct(storyboard, copied), /第 1 单元/);
+  assert.doesNotThrow(() => assertDraftDistinct(storyboard, [{ ...copied[0], body: "项目立足区域产业需求，构建高效协同的空间体系。" }]));
+  assert.doesNotThrow(() => assertDraftDistinct(storyboard, copied, [2]), "Unrelated units stay frozen during a scoped revision");
 });
 
 test("human feedback is phase- and location-bound in the real Pi request and can read the original", async () => {

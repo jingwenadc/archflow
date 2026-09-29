@@ -105,7 +105,7 @@ try {
   await page.locator('[data-job-id="v2"]').getByText("已提交反馈 · 3 条").waitFor();
   const before = writes.length;
   await page.locator("#output-version").selectOption("v1");
-  await page.getByRole("button", { name: "文字审阅与批注", exact: true }).click();
+  await page.getByRole("navigation", { name: "成果制作步骤" }).getByRole("button", { name: "2 正文" }).click();
   await selectText('[data-review-kind="draft"][data-review-index="2"] .generation-body');
   await page.getByRole("textbox", { name: "批注意见", exact: true }).fill("此页补充功能关系说明。");
   await page.getByRole("button", { name: "加入本次反馈", exact: true }).click();
