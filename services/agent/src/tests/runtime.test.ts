@@ -67,6 +67,7 @@ async function provider(pressure = false) {
     let raw = ""; for await (const chunk of req) raw += chunk;
     const payload = JSON.parse(raw); requests.push(payload);
     assert.equal(payload.store, false);
+    assert.equal(payload.reasoning?.effort, "high");
     assert.equal(req.url, "/v1/responses");
     assert.equal(req.headers.authorization, "Bearer test-only");
     const input = payload.input as Array<{ type?: string; role?: string; content?: Array<{ text?: string }>; name?: string }>;
@@ -183,6 +184,8 @@ test("human feedback is phase- and location-bound in the real Pi request and can
 });
 
 test("model IDs resolve official caps; gateway overrides never exceed those caps", () => {
+  assert.equal(modelLimits("gpt-6-sol").contextWindow, 1_050_000);
+  assert.equal(modelLimits("gpt-6-sol").maxOutputTokens, 8192);
   assert.equal(modelLimits("gpt-5.5").contextWindow, 1_050_000);
   assert.equal(modelLimits("gpt-5.5-2026-04-23").contextWindow, 1_050_000);
   assert.equal(modelLimits("gpt-5.2").contextWindow, 400_000);
