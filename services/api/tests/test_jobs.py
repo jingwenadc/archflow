@@ -15,7 +15,7 @@ SKILLS = snapshot_skills(ROOT)
 
 
 def create(repo, units=8, module="concept", **kwargs):
-    return repo.create(GenerationJobCreate(project_id="cold-chain-industrial-park", module=module, goal="确认的测试任务", target_units=units, batch_size=5, **kwargs), str(uuid4()), SKILLS, "generate-model", "review-model")
+    return repo.create(GenerationJobCreate(project_id=kwargs.pop("project_id", "test-project"), module=module, goal="确认的测试任务", target_units=units, batch_size=5, **kwargs), str(uuid4()), SKILLS, "generate-model", "review-model")
 
 
 def save_plan(repo, claim):
@@ -39,22 +39,23 @@ def ready(repo, job):
     return repo.claim()
 
 
-@pytest.mark.parametrize("module", ["concept", "bid"])
-def test_hundred_units_complete_only_after_reviews(tmp_path, module):
+@pytest.mark.parametrize("module,units", [("concept", 1), ("bid", 7), ("concept", 100), ("bid", 137), ("concept", 500)])
+def test_variable_length_documents_complete_only_after_reviews(tmp_path, module, units):
     repo = JobRepository(tmp_path / "db.sqlite3")
-    job = create(repo, 100, module=module)
+    job = create(repo, units, module=module)
     claim = ready(repo, job)
     review = ReviewResult(passed=True, summary="检查通过", issues=[])
     for batch in job.batches:
         repo.checkpoint(job.id, claim.lease_id, JobCheckpoint(action="draft", batch=unit_batch(batch.start_unit, batch.end_unit)))
         repo.checkpoint(job.id, claim.lease_id, JobCheckpoint(action="review", review=review))
     assert repo.detail(job.id).status == "running"
-    assert repo.detail(job.id).completed_units == 100
-    assert repo.list(job.project_id)[0].completed_units == 100
-    assert repo.list(job.project_id)[0].storyboard_units == 100
+    assert repo.detail(job.id).completed_units == units
+    assert repo.list(job.project_id)[0].completed_units == units
+    assert repo.list(job.project_id)[0].storyboard_units == units
     repo.checkpoint(job.id, claim.lease_id, JobCheckpoint(action="final_review", review=review))
     assert repo.detail(job.id).status == "completed"
-    assert [unit.unit_index for unit in repo.units(job.id, "draft", 95, 5)] == list(range(96, 101))
+    start = max(0, units - 5)
+    assert [unit.unit_index for unit in repo.units(job.id, "draft", start, 5)] == list(range(start + 1, units + 1))
 
 
 def test_idempotency_and_frozen_skills(tmp_path):
@@ -66,6 +67,35 @@ def test_idempotency_and_frozen_skills(tmp_path):
         repo.create(request.model_copy(update={"goal": "不同"}), "same", SKILLS, "m", "r")
     assert repo.list("other") == []
     assert repo.claim().skills[0].sha256 == SKILLS[0].sha256
+
+
+@pytest.mark.parametrize("module", ["concept", "bid"])
+@pytest.mark.parametrize("kind", ["budget", "context", "configuration", "provider", "workflow"])
+def test_failure_categories_survive_restart_without_matching_error_text(tmp_path, module, kind):
+    repo = JobRepository(tmp_path / "db.sqlite3")
+    job = create(repo, 3, module=module)
+    claim = repo.claim()
+    repo.checkpoint(job.id, claim.lease_id, JobCheckpoint(action="failure", error="Unrelated diagnostic words", failure_kind=kind))
+    restarted = JobRepository(repo.path)
+    assert restarted.detail(job.id).failure_kind == kind
+    assert restarted.list(job.project_id)[0].failure_kind == kind
+    restarted.control(job.id, "retry")
+    assert restarted.detail(job.id).failure_kind is None
+    assert restarted.detail(job.id).total_tokens == 0
+
+
+def test_failure_migration_preserves_existing_records(tmp_path):
+    repo = JobRepository(tmp_path / "db.sqlite3")
+    job = create(repo, 17)
+    claim = repo.claim()
+    repo.checkpoint(job.id, claim.lease_id, JobCheckpoint(action="failure", error="Legacy diagnostic"))
+    with repo.connect() as db:
+        db.execute("ALTER TABLE generation_jobs DROP COLUMN failure_kind")
+    migrated = JobRepository(repo.path).detail(job.id)
+    assert migrated.failure_kind is None
+    assert migrated.status == "failed"
+    assert migrated.goal == job.goal
+    assert migrated.target_units == 17
 
 
 def test_expired_lease_resumes_saved_draft_not_generation(tmp_path):
@@ -167,7 +197,8 @@ def test_compaction_memory_is_durable_and_lease_fenced(tmp_path):
 def test_api_worker_auth_disable_and_download(tmp_path):
     settings = Settings(upload_dir=tmp_path / "uploads", project_dir=tmp_path / "projects", case_upload_dir=tmp_path / "cases", database_path=tmp_path / "db.sqlite3", repository_root=ROOT, allowed_origins=(), worker_token="test-worker", agent_enabled=True)
     client = TestClient(create_app(settings))
-    request = {"project_id": "cold-chain-industrial-park", "module": "concept", "goal": "测试", "target_units": 2}
+    project = client.post("/api/v1/projects", json={"name": "测试项目"}).json()
+    request = {"project_id": project["id"], "module": "concept", "goal": "测试", "target_units": 2}
     assert client.post("/internal/jobs/claim", json={}).status_code == 401
     assert client.post("/api/v1/jobs", json=request | {"project_id": "missing"}).status_code == 404
     assert client.post("/api/v1/jobs", json=request | {"module": "drawing"}).status_code == 422
@@ -213,7 +244,8 @@ def test_revision_uses_the_newly_confirmed_budget(tmp_path):
         database_path=tmp_path / "db", repository_root=ROOT, allowed_origins=(), worker_token="test", agent_enabled=True)
     client = TestClient(create_app(settings))
     repo = JobRepository(settings.database_path)
-    old = create(repo, 1, max_total_tokens=500000)
+    project = client.post("/api/v1/projects", json={"name": "修订项目"}).json()
+    old = create(repo, 1, project_id=project["id"], max_total_tokens=500000)
     claim = ready(repo, old)
     repo.checkpoint(old.id, claim.lease_id, JobCheckpoint(action="draft", batch=unit_batch(1, 1)))
     passed = ReviewResult(passed=True, summary="通过", issues=[])

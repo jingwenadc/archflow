@@ -13,25 +13,7 @@ class ProjectRepository:
 
     def __init__(self, root: Path) -> None:
         self.root = root
-        self._ensure_default_project()
-
-    def _ensure_default_project(self) -> None:
-        default_dir = self.root / "cold-chain-industrial-park"
-        metadata_path = default_dir / "metadata.json"
-        if metadata_path.exists():
-            return
-        project = ProjectRecord(
-            id="cold-chain-industrial-park",
-            name="冷链产业园",
-            created_at=datetime.now(timezone.utc).isoformat(),
-            status="ready",
-        )
-        (default_dir / "uploads").mkdir(parents=True, exist_ok=True)
-        (default_dir / "workspace").mkdir(exist_ok=True)
-        metadata_path.write_text(
-            json.dumps(project.model_dump(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        self.root.mkdir(parents=True, exist_ok=True)
 
     def list(self) -> list[ProjectRecord]:
         self.root.mkdir(parents=True, exist_ok=True)

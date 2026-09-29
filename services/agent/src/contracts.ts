@@ -72,6 +72,7 @@ export type GenerationJobDetail = {
   model: string;
   review_model: string;
   error?: string | null;
+  failure_kind?: "budget" | "context" | "configuration" | "provider" | "workflow" | null;
   created_at: string;
   updated_at: string;
   outline?: DocumentPlan | null;
@@ -108,6 +109,7 @@ export type GenerationJobRecord = {
   model: string;
   review_model: string;
   error?: string | null;
+  failure_kind?: "budget" | "context" | "configuration" | "provider" | "workflow" | null;
   created_at: string;
   updated_at: string;
 };
@@ -118,6 +120,7 @@ export type JobCheckpoint = {
   batch?: UnitBatch | null;
   review?: ReviewResult | null;
   error?: string | null;
+  failure_kind?: "budget" | "context" | "configuration" | "provider" | "workflow" | null;
 };
 
 export type PlanSection = {

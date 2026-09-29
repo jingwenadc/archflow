@@ -4,7 +4,7 @@ import { workflowState, workflowSteps } from "@/lib/workflow";
 export function WorkflowProgress({ job }: { job: GenerationJobDetail }) {
   const state = workflowState(job);
   return <div className="workflow-progress">
-    <ol aria-label="文档制作步骤">{workflowSteps.map((label, index) => <li key={label}
+    <ol aria-label="文档制作步骤">{workflowSteps(job.module).map((label, index) => <li key={label}
       className={index < state.index ? "done" : index === state.index ? "current" : ""}
       aria-current={index === state.index ? "step" : undefined}><span>{index < state.index ? "✓" : index + 1}</span>{label}</li>)}</ol>
     <p role="status">{state.label}</p>

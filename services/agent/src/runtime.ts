@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Type } from "typebox";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, isContextOverflow } from "@earendil-works/pi-ai";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { ApiClient } from "./client.js";
 import { schemas, type ArtifactUnit, type ClaimedJob, type JobCheckpoint } from "./contracts.js";
 import { modelLimits } from "./model-limits.js";
+import { WorkflowError } from "./errors.js";
 
 export type ModelConfig = { baseUrl: string; apiKey: string; contextWindow?: number; maxOutputTokens: number; workDir: string };
 
@@ -45,7 +46,8 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
   const settings = SettingsManager.inMemory({ compaction: { enabled: true, reserveTokens: limits.contextWindow - compactAt, keepRecentTokens: Math.min(8000, Math.floor(compactAt / 4)) }, retry: { enabled: false, provider: { maxRetries: 0 } }, cacheWarming: "off" });
   const loaded = new Set<string>();
   let submitted = false;
-  let modelError = "";
+  let modelError: WorkflowError | undefined;
+  let streamError: unknown;
   let progressWrites = Promise.resolve();
   let progressError: unknown;
   const progress = (step: Parameters<ApiClient["progress"]>[2]["step"], summary?: string) => {
@@ -122,13 +124,15 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
   let compactions = 0;
   session.agent.streamFunction = async (currentModel, context, options) => {
     signal.throwIfAborted();
+    if (streamError) throw streamError;
     if (submitted) throw new Error("Checkpoint already saved; no further model calls are authorized in this step.");
     if (++calls > 60 || compactions > 8) throw new Error("当前步骤多次整理后仍未完成。请检查素材或缩小本次任务范围；已保存内容保留。");
     await progressWrites;
     if (progressError) throw progressError;
     const callId = randomUUID();
     // Fail CLOSED before any provider request; Pi extension errors alone are not a budget gate.
-    await api.call(job.id, claim.lease_id, "reserve", { call_id: callId, model: modelId, total_tokens: 0 });
+    try { await api.call(job.id, claim.lease_id, "reserve", { call_id: callId, model: modelId, total_tokens: 0 }); }
+    catch (error) { streamError = error; throw error; } // Preserve typed local errors across the SDK message boundary.
     // Some Responses gateways reject Pi's session-affinity headers with HTTP 520.
     // The durable task is already in SQLite; provider-side session affinity is unnecessary.
     const stream = await originalStream(currentModel, context, { ...options, sessionId: undefined, cacheRetention: "none", signal: AbortSignal.any([signal, ...(options?.signal ? [options.signal] : [])]), onPayload: async (payload, providerModel) => {
@@ -149,6 +153,7 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
         }
         accounted.end(await stream.result());
       } catch (error) {
+        streamError = error;
         const message = await stream.result();
         accounted.push({ type: "error", reason: "error", error: { ...message, stopReason: "error", errorMessage: error instanceof Error ? error.message : "Usage accounting failed." } });
         accounted.end();
@@ -163,7 +168,7 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
       void progress("continuing", event.result.summary);
     }
     if (event.type === "message_end" && event.message.role === "assistant") {
-      if (event.message.stopReason === "error") modelError = (event.message.errorMessage ?? "模型接口请求失败。").replaceAll(config.apiKey, "[redacted]").replaceAll(config.baseUrl, "[endpoint]").slice(0, 800);
+      if (event.message.stopReason === "error") modelError = new WorkflowError(isContextOverflow(event.message) ? "context" : "provider", (event.message.errorMessage ?? "模型接口请求失败。").replaceAll(config.apiKey, "[redacted]").replaceAll(config.baseUrl, "[endpoint]").slice(0, 800));
     }
   });
   session.agent.finishTurn = () => submitted ? { action: "end" } : undefined;
@@ -188,7 +193,7 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
     await session.prompt(prompt);
     await progressWrites;
     if (progressError) throw progressError;
-    if (!submitted) throw new Error(modelError || "Agent stopped without a valid checkpoint.");
+    if (!submitted) throw streamError ?? modelError ?? new WorkflowError("workflow", "Agent stopped without a valid checkpoint.");
   } finally {
     signal.removeEventListener("abort", abort);
     unsubscribe();

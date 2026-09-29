@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiRequest, jobDownloadUrl, type Message } from "@/lib/api";
 import type { GenerationJobCreate, GenerationJobDetail, GenerationJobRecord } from "@/lib/job-contracts";
-import { conversationTimeline, failureHelp, isActiveJob, jobStatuses, orderedJobs, requestedPageCount, requirementBrief } from "@/lib/workflow";
+import { conversationTimeline, failureHelp, isActiveJob, jobStatuses, orderedJobs, requestedUnitCount, requirementBrief } from "@/lib/workflow";
 import { ConversationMessage } from "./conversation-message";
 import { OutputPreview } from "./output-preview";
 import { WorkflowProgress } from "./workflow-progress";
@@ -36,6 +36,7 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
   const versions = orderedJobs(jobs);
   const hasNewRequest = !!latestUser && (!job || Date.parse(latestUser.created_at) > Date.parse(job.created_at));
   const generating = !!job && ["queued", "running"].includes(job.status);
+  const planningLabel = module === "concept" ? "逐页策划" : "逐章策划";
 
   function remember(next: GenerationJobDetail) {
     setJob(next);
@@ -75,9 +76,9 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
     if (loading || !ready || !brief || brief === lastUsers.current) return;
     lastUsers.current = brief; requestKey.current = null; setGoal(brief);
     const requested = [...messages].reverse().filter(message => message.role === "user" && (!job || Date.parse(message.created_at) > Date.parse(job.created_at)))
-      .map(message => requestedPageCount(message.content)).find(value => value !== undefined);
+      .map(message => requestedUnitCount(message.content, module)).find(value => value !== undefined);
     setCount(requested ?? job?.target_units ?? 10);
-    const range = latest.match(/第\s*(\d{1,3})\s*(?:[-–到至]\s*(\d{1,3}))?\s*页/);
+    const range = latest.match(module === "bid" ? /第\s*(\d{1,3})\s*(?:[-–到至]\s*(\d{1,3}))?\s*章/ : /第\s*(\d{1,3})\s*(?:[-–到至]\s*(\d{1,3}))?\s*页/);
     if (range) setRevisionRange(range[2] ? `${range[1]}-${range[2]}` : range[1]);
   }, [brief, latest, loading, ready]);
 
@@ -146,7 +147,7 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
         {hasNewRequest && !generating && <p className="generation-note">已收到新需求，请确认下方新版本；本版需求与成果保留。</p>}
         {job.status === "failed" && <p role="alert">{failure.message}</p>}
         <div className="generation-actions">
-          {!hasNewRequest && ["waiting_outline", "waiting_storyboard"].includes(job.status) && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/approve`)}>{job.status === "waiting_outline" ? `批准 V${version} 提纲，继续逐页策划` : `批准 V${version} 逐页策划并授权生成全部页面`}</button>}
+          {!hasNewRequest && ["waiting_outline", "waiting_storyboard"].includes(job.status) && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/approve`)}>{job.status === "waiting_outline" ? `批准 V${version} 提纲，继续${planningLabel}` : `批准 V${version} ${planningLabel}并授权生成全部内容`}</button>}
           {isActiveJob(job) && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/cancel`)}>取消任务</button>}
           {!hasNewRequest && job.status === "failed" && failure.kind !== "budget" && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/retry`)}>{failure.retry}</button>}
         </div>
@@ -158,7 +159,7 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
     </section>;
   }
 
-  const canStart = !loading && (!jobs.length || !!job) && !busy && !sendingMessage && enabled && materialsReady && !generating && !!goal.trim() && Number.isInteger(count) && count >= 1 && count <= 500 && Number.isInteger(tokenBudget) && tokenBudget >= 1000 && tokenBudget <= 10000000;
+  const canStart = !loading && (!jobs.length || !!job) && !busy && !sendingMessage && enabled && materialsReady && !generating && !!goal.trim() && goal.length <= 20000 && Number.isInteger(count) && count >= 1 && count <= 500 && Number.isInteger(tokenBudget) && tokenBudget >= 1000 && tokenBudget <= 10000000;
   return <>
     {module !== "drawing" && outputMount && createPortal(<OutputPreview jobs={jobs} selectedId={previewId} onSelect={selectPreview} onOutputAvailable={onOutputAvailable} />, outputMount)}
     {ready && conversationTimeline(messages, jobs).map(entry => entry.type === "message"
@@ -171,7 +172,9 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
       <h3>{job ? `确认新版本需求 · V${versions.length + 1}` : "确认这次需求 · V1"}</h3>
       {job && <p className="generation-note">确认后保存为独立版本；原需求卡与成果保留，右侧预览不会自动切换。</p>}
       <label className="requirement-editor">编辑需求摘要<textarea aria-label="需求摘要" rows={3} value={goal} disabled={busy} onChange={event => { setGoal(event.target.value); requestKey.current = null; }} /></label>
+      {goal.length > 20000 && <p role="alert">需求超过 20,000 字，请精简摘要；原始对话与资料仍保留，不会自动删除前面的要求。</p>}
       <label>{module === "concept" ? "预计页数" : "内容章节数"}<input type="number" min={1} max={500} value={count} disabled={busy} onChange={event => { setCount(Number(event.target.value)); requestKey.current = null; }} /></label>
+      {(!Number.isInteger(count) || count < 1 || count > 500) && <p role="alert">本次内容数量需在 1–500 之间。较长文档请拆分任务，不会自动缩减你的要求。</p>}
       <details><summary>运行上限与费用控制</summary><label>累计 token 上限<input type="number" min={1000} max={10000000} value={tokenBudget} disabled={busy} onChange={event => { setTokenBudget(Number(event.target.value)); requestKey.current = null; }} /></label><p>含输入和输出，非美元预算。最多 400 次调用；达到上限会停止并保留检查点，不会自动提高预算。单次已启动的请求可能使 token 总量超出上限。</p></details>
       {job && ["completed", "needs_review"].includes(job.status) && <><label>基于 V{versions.length} 修改页码 / 内容单元<input value={revisionRange} disabled={busy} onChange={event => { setRevisionRange(event.target.value); requestKey.current = null; }} placeholder="例如 3-5" /></label><button disabled={!canStart || count !== job.target_units} onClick={revise}>确认范围，生成新版本</button>{count !== job.target_units && <p className="generation-note">局部修改保留原有 {job.target_units} 个内容单元；调整总数量请使用下方重新整理提纲。</p>}</>}
       <button disabled={!canStart} onClick={() => void start()}>{busy ? "正在保存并创建版本…" : !job ? "确认需求，整理提纲" : `确认 ${count} ${module === "concept" ? "页" : "章"}需求，生成新版本提纲`}</button>

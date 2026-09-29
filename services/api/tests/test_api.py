@@ -67,8 +67,8 @@ def test_create_project_builds_isolated_workspace(tmp_path: Path) -> None:
     assert (project_dir / "uploads").is_dir()
     assert (project_dir / "workspace").is_dir()
     projects = client.get("/api/v1/projects").json()
-    assert any(item["id"] == "cold-chain-industrial-park" for item in projects)
-    assert any(item["id"] == project["id"] for item in projects)
+    assert projects == [project]
+    assert make_client(tmp_path).get("/api/v1/projects").json() == [project]
 
 
 def test_project_name_cannot_be_blank(tmp_path: Path) -> None:
@@ -76,10 +76,18 @@ def test_project_name_cannot_be_blank(tmp_path: Path) -> None:
     assert response.status_code == 422
 
 
+def test_startup_never_inserts_a_demo_project(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    assert client.get("/api/v1/projects").json() == []
+    assert list((tmp_path / "projects").iterdir()) == []
+    assert make_client(tmp_path).get("/api/v1/projects").json() == []
+
+
 def test_conversation_and_messages_persist(tmp_path: Path) -> None:
     client = make_client(tmp_path)
+    project = client.post("/api/v1/projects", json={"name": "测试项目"}).json()
     conversation = client.post("/api/v1/conversations", json={
-        "project_id": "cold-chain-industrial-park", "module": "concept", "title": "方案 PPT V1",
+        "project_id": project["id"], "module": "concept", "title": "方案 PPT V1",
     })
     assert conversation.status_code == 201
     conversation_id = conversation.json()["id"]
@@ -89,7 +97,7 @@ def test_conversation_and_messages_persist(tmp_path: Path) -> None:
     assert client.get(f"/api/v1/conversations/{conversation_id}/messages").json()[0]["content"] == "整理项目条件"
     restarted_client = make_client(tmp_path)
     assert restarted_client.get(
-        "/api/v1/conversations?project_id=cold-chain-industrial-park&module=concept"
+        f"/api/v1/conversations?project_id={project['id']}&module=concept"
     ).json()[0]["id"] == conversation_id
     assert restarted_client.get(f"/api/v1/conversations/{conversation_id}/messages").json()[0]["content"] == "整理项目条件"
 
@@ -113,7 +121,8 @@ def test_project_files_are_listed_per_project(tmp_path: Path) -> None:
     )
     assert uploaded.status_code == 201
     assert client.get(f"/api/v1/files?project_id={project['id']}").json() == [uploaded.json()]
-    assert client.get("/api/v1/files?project_id=cold-chain-industrial-park").json() == []
+    other = client.post("/api/v1/projects", json={"name": "另一个项目"}).json()
+    assert client.get(f"/api/v1/files?project_id={other['id']}").json() == []
     assert client.get("/api/v1/files?project_id=missing").status_code == 404
 
 

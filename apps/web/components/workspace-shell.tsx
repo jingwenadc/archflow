@@ -7,6 +7,7 @@ import {
   getConversations,
   getMessages,
   getProjectFiles,
+  getProjects,
   sendMessage,
   uploadProjectFile,
   apiRequest,
@@ -71,7 +72,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [hydrated, setHydrated] = useState(false);
-  const [projectId, setProjectId] = useState("cold-chain-industrial-park");
+  const [projectId, setProjectId] = useState("");
   const [files, setFiles] = useState<FileItem[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
@@ -147,16 +148,22 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
   }, [hydrated, leftWidth, rightWidth, leftCollapsed, rightCollapsed]);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("archflow.active-project");
-    if (saved) setProjectId(saved);
-    const onChange = (event: Event) => setProjectId((event as CustomEvent<string>).detail);
+    let cancelled = false;
+    let changed = false;
+    const onChange = (event: Event) => { changed = true; setProjectId((event as CustomEvent<string>).detail); };
     window.addEventListener("archflow:project-changed", onChange);
-    return () => window.removeEventListener("archflow:project-changed", onChange);
+    void getProjects().then(items => {
+      if (cancelled || changed) return;
+      const saved = window.localStorage.getItem("archflow.active-project");
+      setProjectId((items.find(item => item.id === saved) ?? items[0])?.id ?? "");
+    }).catch(reason => { if (!cancelled) setNotice(reason instanceof Error ? reason.message : "无法读取项目。"); });
+    return () => { cancelled = true; window.removeEventListener("archflow:project-changed", onChange); };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     setFiles([]);
+    if (!projectId) return;
     getProjectFiles(projectId)
       .then((items) => {
         if (!cancelled) setFiles(items.map(toFileItem));
@@ -183,6 +190,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
     setActiveConversationId(null);
     setMessages([]);
     setDraft("");
+    if (!projectId) { setLoadingConversations(false); return; }
     getConversations(projectId, module.key)
       .then((items) => {
         if (cancelled) return;
@@ -246,7 +254,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
   }
 
   async function addConversation() {
-    if (creatingConversation) return;
+    if (!projectId || creatingConversation) return;
     setCreatingConversation(true);
     const scope = currentScope.current;
     try {
@@ -266,7 +274,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
   async function submitMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const content = draft.trim();
-    if (!content || sendingMessage) return;
+    if (!projectId || !content || sendingMessage) return;
     const scope = currentScope.current;
     setSendingMessage(true);
     followMessages.current = true;
@@ -321,6 +329,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
   }
 
   async function addFiles(selected: FileList | File[]) {
+    if (!projectId) { announce("请先从右上角选择或新建项目。"); return; }
     const scope = currentScope.current;
     for (const file of Array.from(selected)) {
       const ext = extensionOf(file.name);
@@ -384,6 +393,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
                 <input
                   ref={fileInput}
                   type="file"
+                  disabled={!projectId}
                   multiple
                   accept="image/jpeg,image/png,image/webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
                   onChange={(event) => event.target.files && void addFiles(event.target.files)}
@@ -448,7 +458,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
                 ><CloseIcon /></button>
               </div>
             ))}
-            <button className="new-conversation" type="button" disabled={creatingConversation} onClick={() => void addConversation()}>
+            <button className="new-conversation" type="button" disabled={!projectId || creatingConversation} onClick={() => void addConversation()}>
               <PlusIcon /><span>{creatingConversation ? "创建中…" : "新建对话"}</span>
             </button>
           </div>
@@ -482,6 +492,8 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
           <div className="chat-thread" ref={thread} onScroll={event => { const element = event.currentTarget; followMessages.current = element.scrollHeight-element.scrollTop-element.clientHeight < 100; }}>
             {loadingConversations || loadingMessages ? (
               <div className="chat-empty"><strong>正在读取项目对话…</strong></div>
+            ) : !projectId ? (
+              <div className="chat-empty"><strong>先选择或新建项目</strong><p>使用右上角的项目菜单开始。资料、对话和成果会保存在该项目中。</p></div>
             ) : !activeConversation ? (
               <div className="chat-empty"><strong>你想完成什么？</strong><p>在左侧上传任务书、参考 PPT 或图片，然后在下方描述要求。发送第一条消息时会自动新建对话。</p></div>
             ) : messages.length === 0 ? (
@@ -500,11 +512,11 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
               <textarea
                 rows={2}
                 value={draft}
-                disabled={sendingMessage}
+                disabled={!projectId || sendingMessage}
                 placeholder="描述需求、补充条件或修改指定页…"
                 onChange={(event) => setDraft(event.target.value)}
               />
-              <button className="send-button" type="submit" disabled={!draft.trim() || sendingMessage} aria-label={sendingMessage ? "正在发送" : "发送消息"}>{sendingMessage ? "…" : <SendIcon />}</button>
+              <button className="send-button" type="submit" disabled={!projectId || !draft.trim() || sendingMessage} aria-label={sendingMessage ? "正在发送" : "发送消息"}>{sendingMessage ? "…" : <SendIcon />}</button>
             </form>
             <p className="professional-note">AI 生成内容需由设计师或相应专业工程师复核</p>
           </div>

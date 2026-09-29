@@ -45,7 +45,8 @@ def test_delete_cancels_all_unfinished_jobs_and_fences_worker(tmp_path):
         database_path=tmp_path / "archflow.sqlite3", repository_root=ROOT, allowed_origins=(),
         worker_token="test-worker", agent_enabled=True,
     )))
-    conversation = client.post("/api/v1/conversations", json={"project_id": "cold-chain-industrial-park", "module": "concept", "title": "任务对话"}).json()
+    project = client.post("/api/v1/projects", json={"name": "任务项目"}).json()
+    conversation = client.post("/api/v1/conversations", json={"project_id": project["id"], "module": "concept", "title": "任务对话"}).json()
     repo = JobRepository(tmp_path / "archflow.sqlite3")
     request = GenerationJobCreate(project_id=conversation["project_id"], conversation_id=conversation["id"], module="concept", goal="虚构测试任务", target_units=1)
     states = ["running", "queued", "waiting_outline", "waiting_storyboard", "failed", "completed", "needs_review"]

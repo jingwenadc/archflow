@@ -12,7 +12,8 @@ const project = { id: "workflow-fixture", name: "版本与需求回归（虚构�
 const conversation = { id: "conversation-fixture", project_id: project.id, module: "concept", title: "方案需求验收" };
 let tick = 0;
 const timestamp = () => new Date(Date.UTC(2026, 8, 28, 1, 0, tick++)).toISOString();
-const messages = [{ id: "m1", conversation_id: conversation.id, role: "user", content: "帮我制作冷链方案设计ppt", created_at: timestamp() }];
+const initialGoal = "制作学校改造项目汇报，参考上传资料";
+const messages = [{ id: "m1", conversation_id: conversation.id, role: "user", content: initialGoal, created_at: timestamp() }];
 const jobs = [];
 const writes = [];
 let unexpected = [];
@@ -96,7 +97,7 @@ assert.match(await textarea.inputValue(), /面向甲方/);
 assert.equal(await v1Card.getByRole("button", { name: /批准.*提纲/ }).count(), 0);
 assert.equal(await thread.getByLabel("成果版本", { exact: true }).count(), 0);
 const order = await thread.locator(".user-message, .confirmed-requirement").evaluateAll(elements => elements.map(element => element.classList.contains("confirmed-requirement") ? element.dataset.jobId : element.querySelector(".message-bubble").innerText));
-assert.deepEqual(order, ["帮我制作冷链方案设计ppt", "v1", "10页太少了，做40页ppt"]);
+assert.deepEqual(order, [initialGoal, "v1", "10页太少了，做40页ppt"]);
 await pending.getByRole("button", { name: "确认 40 页需求，生成新版本提纲", exact: true }).click();
 const v2Card = page.getByRole("region", { name: "已确认需求 V2", exact: true });
 await v2Card.waitFor();
@@ -132,10 +133,10 @@ await page.getByRole("button", { name: "发送消息", exact: true }).click();
 await pending.waitFor();
 assert.equal(await pending.getByRole("spinbutton", { name: "预计页数", exact: true }).inputValue(), "40");
 assert.equal(await pending.getByRole("button", { name: "确认 40 页需求，生成新版本提纲", exact: true }).isDisabled(), true);
-// Legacy context failures get the correct remedy, not an unrelated budget upsell.
-jobs[1].status = "failed"; jobs[1].error = "本阶段上下文过长。请提高 context window。"; jobs[1].updated_at = timestamp();
-await v2Card.getByText("资料上下文需要重新整理。现在会先整理记忆再继续当前步骤，不需要提高累计预算。", { exact: true }).waitFor();
-assert.equal(await v2Card.getByText("本阶段上下文过长。请提高 context window。", { exact: true }).isVisible(), false);
+// Recovery follows the structured failure category, never words in diagnostic text.
+jobs[1].status = "failed"; jobs[1].failure_kind = "context"; jobs[1].error = "Opaque provider diagnostic"; jobs[1].updated_at = timestamp();
+await v2Card.getByText("当前上下文未能整理完成。可以从检查点继续；若重复失败，需要检查模型窗口或减少单次输入，而不是提高累计预算。", { exact: true }).waitFor();
+assert.equal(await v2Card.getByText("Opaque provider diagnostic", { exact: true }).isVisible(), false);
 assert.equal(await v2Card.getByRole("button", { name: "批准新上限并继续", exact: true }).count(), 0);
 await page.screenshot({ path: process.env.ARCHFLOW_TEST_SCREENSHOT ?? "/tmp/archflow-workflow-history.png", fullPage: true });
 assert.deepEqual(unexpected, []);

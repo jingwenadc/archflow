@@ -1,3 +1,5 @@
+import { WorkflowError } from "./errors.js";
+
 // Official API model pages, verified 2026-09-28. Provider aliases need an explicit override.
 // Source: https://developers.openai.com/api/docs/models/<model-id>
 const catalog: Record<string, { contextWindow: number; maxOutputTokens: number; reasoning: boolean }> = {
@@ -28,9 +30,9 @@ export function contextOverride(value: string | undefined): number | undefined {
 export function modelLimits(modelId: string, override?: number, output = 8192) {
   // Only strip the documented snapshot date form, not arbitrary gateway suffixes.
   const known = catalog[modelId] ?? catalog[modelId.replace(/-\d{4}-\d{2}-\d{2}$/, "")];
-  if (!known && !override) throw new Error(`Unknown model ${modelId}; configure its verified ARCHFLOW_LLM_CONTEXT_WINDOW.`);
+  if (!known && !override) throw new WorkflowError("configuration", `Unknown model ${modelId}; configure its verified ARCHFLOW_LLM_CONTEXT_WINDOW.`);
   const contextWindow = Math.min(override ?? known!.contextWindow, known?.contextWindow ?? Infinity);
   const maxOutputTokens = Math.min(output, known?.maxOutputTokens ?? output);
-  if (maxOutputTokens >= contextWindow) throw new Error("Output token limit must be smaller than the model/provider context window.");
+  if (maxOutputTokens >= contextWindow) throw new WorkflowError("configuration", "Output token limit must be smaller than the model/provider context window.");
   return { contextWindow, maxOutputTokens, reasoning: known?.reasoning ?? true };
 }

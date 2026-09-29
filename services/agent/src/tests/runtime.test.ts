@@ -12,6 +12,7 @@ import { processJob } from "../worker.js";
 import { readSkill, runStep, type ModelConfig } from "../runtime.js";
 import type { ArtifactUnit, ClaimedJob, GenerationJobDetail, JobCheckpoint, UsageRecord, WorkerProgress, AgentMemory } from "../contracts.js";
 import { contextOverride, modelLimits } from "../model-limits.js";
+import { WorkflowError } from "../errors.js";
 
 class MemoryApi extends ApiClient {
   job: GenerationJobDetail = {
@@ -31,7 +32,7 @@ class MemoryApi extends ApiClient {
   }
   override async units(_id: string, kind: "draft" | "storyboard", offset: number, limit = 10) { return this.data[kind].slice(offset, offset + limit); }
   override async call(_id: string, _lease: string, action: "reserve" | "usage", usage: UsageRecord) {
-    if (action === "reserve") { if (this.job.model_calls >= this.job.max_model_calls) throw new Error("Budget exhausted"); this.job.model_calls++; }
+    if (action === "reserve") { if (this.job.model_calls >= this.job.max_model_calls) throw new WorkflowError("budget", "Budget exhausted"); this.job.model_calls++; }
     else this.job.total_tokens += usage.total_tokens;
   }
   override async checkpoint(_id: string, _lease: string, checkpoint: JobCheckpoint) {
@@ -48,7 +49,7 @@ class MemoryApi extends ApiClient {
       if (this.job.completed_units === 8) this.job.stage = "final_review";
     }
     if (checkpoint.action === "final_review") { this.job.final_review = checkpoint.review; this.job.status = checkpoint.review!.passed ? "completed" : "needs_review"; }
-    if (checkpoint.action === "failure") { this.job.error = checkpoint.error; this.job.status = "failed"; }
+    if (checkpoint.action === "failure") { this.job.error = checkpoint.error; this.job.failure_kind = checkpoint.failure_kind; this.job.status = "failed"; }
     return this.detail();
   }
   async claimSnapshot(): Promise<ClaimedJob> { return {
@@ -153,8 +154,37 @@ test("model IDs resolve official caps; gateway overrides never exceed those caps
   assert.equal(modelLimits("private-alias", 128000).contextWindow, 128000);
 });
 
-test("context pressure compacts, accounts every request, saves memory and continues to approval", async () => {
+test("configuration and budget failures are typed, not inferred from their wording", async () => {
+  const api = new MemoryApi();
+  const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-config-"));
+  try {
+    await processJob(api, await api.claimSnapshot(), { baseUrl: "http://unused", apiKey: "test-only", maxOutputTokens: 4096, workDir }, new AbortController().signal);
+    assert.equal(api.job.status, "failed");
+    assert.equal(api.job.failure_kind, "configuration");
+    assert.equal(api.job.model_calls, 0);
+    api.job.status = "running"; api.job.max_model_calls = 0;
+    await processJob(api, await api.claimSnapshot(), { baseUrl: "http://unused", apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir }, new AbortController().signal);
+    assert.equal(api.job.failure_kind, "budget");
+    assert.equal(api.job.model_calls, 0);
+  } finally { await rm(workDir, { recursive: true, force: true }); }
+});
+
+test("worker API reads structured failure categories regardless of message language", async () => {
+  const server = createServer((_request, response) => {
+    response.writeHead(409, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ detail: { code: "budget", message: "本次调用未获授权" } }));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const api = new ApiClient(`http://127.0.0.1:${(server.address() as { port: number }).port}`, "test-only");
+  try {
+    await assert.rejects(api.call("any-job", "any-lease", "reserve", { call_id: "any-call", model: "any-model", total_tokens: 0 }),
+      error => error instanceof WorkflowError && error.kind === "budget");
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+for (const module of ["concept", "bid"] as const) test(`${module}: context pressure compacts, accounts every request, saves memory and continues to approval`, async () => {
   const endpoint = await provider(true); const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-compact-")); const api = new MemoryApi();
+  api.job.module = module;
   const config = { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir };
   // A large removable tool result simulates accumulated project observations.
   api.data.storyboard = [{ unit_index: 1, title: "Pressure fixture", body: "x".repeat(60000), evidence: ["user-brief"], missing_facts: [] }];
@@ -183,6 +213,7 @@ test("compaction cannot bypass a model-call budget", async () => {
   try {
     await processJob(api, await api.claimSnapshot(), { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir }, new AbortController().signal);
     assert.equal(api.job.status, "failed");
+    assert.equal(api.job.failure_kind, "budget");
     assert.ok(api.steps.includes("compacting"));
     assert.equal(endpoint.requests.length, 3);
     assert.equal(api.job.model_calls, 3);
@@ -201,7 +232,7 @@ test("exhausted budget blocks the request before reaching the endpoint", async (
   } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
 });
 
-test("100 units travel through real FastAPI, SQLite, Pi and the Responses adapter", async () => {
+for (const [module, target, batchSize] of [["concept", 100, 5], ["bid", 137, 7]] as const) test(`${module}: ${target} units travel through real FastAPI, SQLite, Pi and the Responses adapter`, async () => {
   const root = fileURLToPath(new URL("../../../../", import.meta.url));
   const python = process.env.ARCHFLOW_TEST_PYTHON ?? join(root, "services/api/.venv/bin/python");
   await access(python); // This test requires pip install -e 'services/api[dev]'. No silent skip.
@@ -225,7 +256,10 @@ test("100 units travel through real FastAPI, SQLite, Pi and the Responses adapte
       if (ready) break; await delay(50);
     }
     assert.ok(ready, "API did not start");
-    const response = await fetch(`${apiUrl}/api/v1/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: "cold-chain-industrial-park", module: "concept", goal: "已确认的测试资料", target_units: 100, max_model_calls: 500 }) });
+    const projectResponse = await fetch(`${apiUrl}/api/v1/projects`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: `Independent ${module} project` }) });
+    assert.equal(projectResponse.status, 201);
+    const project = await projectResponse.json() as { id: string };
+    const response = await fetch(`${apiUrl}/api/v1/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: project.id, module, goal: "已确认的测试资料", target_units: target, batch_size: batchSize, max_model_calls: 500 }) });
     assert.equal(response.status, 202);
     const job = await response.json() as GenerationJobDetail;
     const config = { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir: join(workDir, "agent") };
@@ -240,12 +274,12 @@ test("100 units travel through real FastAPI, SQLite, Pi and the Responses adapte
       }
     }
     const detail = await api.detail(job.id);
-    assert.equal(detail.completed_units, 100);
+    assert.equal(detail.completed_units, target);
     assert.equal(detail.model_calls, endpoint.requests.length);
     assert.equal(detail.total_tokens, endpoint.requests.length * 120);
-    assert.equal((await api.units(job.id, "draft", 95, 5)).at(-1)?.unit_index, 100);
+    assert.equal((await api.units(job.id, "draft", target - 2, 2)).at(-1)?.unit_index, target);
     const download = await (await fetch(`${apiUrl}/api/v1/jobs/${job.id}/download`)).json() as { units: ArtifactUnit[] };
-    assert.equal(download.units.length, 100);
+    assert.equal(download.units.length, target);
   } finally {
     child.kill("SIGTERM"); await new Promise<void>(resolve => child.exitCode !== null ? resolve() : child.once("exit", () => resolve()));
     await endpoint.close(); await rm(workDir, { recursive: true, force: true });

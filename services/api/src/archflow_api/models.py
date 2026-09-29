@@ -182,12 +182,16 @@ class ReviewResult(BaseModel):
     issues: list[str] = Field(max_length=30)
 
 
+FailureKind = Literal["budget", "context", "configuration", "provider", "workflow"]
+
+
 class JobCheckpoint(BaseModel):
     action: Literal["plan", "storyboard", "draft", "review", "final_review", "failure"]
     plan: DocumentPlan | None = None
     batch: UnitBatch | None = None
     review: ReviewResult | None = None
     error: str | None = Field(default=None, max_length=2000)
+    failure_kind: FailureKind | None = None
 
 
 class UsageRecord(BaseModel):
@@ -235,6 +239,7 @@ class GenerationJobRecord(BaseModel):
     model: str
     review_model: str
     error: str | None = None
+    failure_kind: FailureKind | None = None
     created_at: str
     updated_at: str
 

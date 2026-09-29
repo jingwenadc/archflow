@@ -109,6 +109,9 @@ class JobRepository:
                 CREATE INDEX IF NOT EXISTS generation_project_idx ON generation_jobs(project_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS generation_events_job_idx ON generation_events(job_id, id DESC);
             """)
+            db.execute("BEGIN IMMEDIATE")
+            if "failure_kind" not in {column[1] for column in db.execute("PRAGMA table_info(generation_jobs)")}:
+                db.execute("ALTER TABLE generation_jobs ADD COLUMN failure_kind TEXT")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -259,7 +262,10 @@ class JobRepository:
                     "compacting": "正在整理资料记忆，随后继续", "continuing": "资料记忆已整理，继续当前步骤"}
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            self.leased(db, job_id, lease_id)
+            row = self.leased(db, job_id, lease_id)
+            if row["module"] == "bid":
+                messages["storyboarding"] = "正在策划章节内容"
+                messages["generating"] = "正在生成章节内容"
             if request.memory:
                 db.execute("INSERT INTO generation_memory VALUES(?,?) ON CONFLICT(job_id) DO UPDATE SET payload=excluded.payload",
                            (job_id, request.memory.model_dump_json()))
@@ -294,7 +300,7 @@ class JobRepository:
                 new_status, stage = "queued", row["stage"]
             else:
                 raise HTTPException(422, "Unknown job action.")
-            db.execute("UPDATE generation_jobs SET status=?,stage=?,error=NULL,lease_id=NULL,lease_until=NULL,updated_at=? WHERE id=?",
+            db.execute("UPDATE generation_jobs SET status=?,stage=?,error=NULL,failure_kind=NULL,lease_id=NULL,lease_until=NULL,updated_at=? WHERE id=?",
                        (new_status, stage, timestamp(), job_id))
             self.event(db, job_id, action, {"cancel": "任务已取消；已保存内容仍可查看。", "approve": "用户批准了当前计划和下一阶段范围。", "retry": "任务重新排队，将保留已有内容与用量。"}[action])
         return self.detail(job_id)
@@ -307,7 +313,7 @@ class JobRepository:
             row = self.require(db, job_id)
             if row["status"] != "failed" or calls <= row["model_calls"] or tokens <= row["total_tokens"]:
                 raise HTTPException(409, "只能继续失败任务，且批准的总上限必须高于已用量。")
-            db.execute("UPDATE generation_jobs SET max_model_calls=?,max_total_tokens=?,status='queued',error=NULL,lease_id=NULL,lease_until=NULL,updated_at=? WHERE id=?", (calls, tokens, timestamp(), job_id))
+            db.execute("UPDATE generation_jobs SET max_model_calls=?,max_total_tokens=?,status='queued',error=NULL,failure_kind=NULL,lease_id=NULL,lease_until=NULL,updated_at=? WHERE id=?", (calls, tokens, timestamp(), job_id))
             self.event(db, job_id, "retry", "用户明确批准新的总调用/token 上限，保留检查点继续。")
         return self.detail(job_id)
 
@@ -318,7 +324,7 @@ class JobRepository:
             if db.execute("SELECT 1 FROM generation_calls WHERE job_id=? AND call_id=?", (job_id, usage.call_id)).fetchone():
                 return
             if row["model_calls"] >= row["max_model_calls"] or row["total_tokens"] >= row["max_total_tokens"]:
-                raise HTTPException(409, "Model call or token budget exhausted.")
+                raise HTTPException(409, {"code": "budget", "message": "Model call or token budget exhausted."})
             db.execute("INSERT INTO generation_calls(job_id,call_id,model) VALUES(?,?,?)", (job_id, usage.call_id, usage.model))
             db.execute("UPDATE generation_jobs SET model_calls=model_calls+1 WHERE id=?", (job_id,))
 
@@ -343,7 +349,7 @@ class JobRepository:
                 if not checkpoint.error:
                     raise HTTPException(422, "Failure requires an error.")
                 state = "failed"
-                db.execute("UPDATE generation_jobs SET error=? WHERE id=?", (checkpoint.error, job_id))
+                db.execute("UPDATE generation_jobs SET error=?,failure_kind=? WHERE id=?", (checkpoint.error, checkpoint.failure_kind or "workflow", job_id))
             elif checkpoint.action == "plan":
                 if stage != "planning" or checkpoint.plan is None:
                     raise HTTPException(409, "Job is not planning.")

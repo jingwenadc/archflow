@@ -8,7 +8,8 @@ const projectStorageKey = "archflow.active-project";
 
 export function ProjectSwitcher() {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [activeId, setActiveId] = useState("cold-chain-industrial-park");
+  const [activeId, setActiveId] = useState("");
+  const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -24,17 +25,14 @@ export function ProjectSwitcher() {
         setProjects(items);
         const savedId = window.localStorage.getItem(projectStorageKey);
         const next = items.find((project) => project.id === savedId) ?? items[0];
-        if (next) {
-          setActiveId(next.id);
-          if (savedId !== next.id) {
-            window.localStorage.setItem(projectStorageKey, next.id);
-            window.dispatchEvent(new CustomEvent("archflow:project-changed", { detail: next.id }));
-          }
-        }
+        setActiveId(next?.id ?? "");
+        if (next) window.localStorage.setItem(projectStorageKey, next.id);
+        else window.localStorage.removeItem(projectStorageKey);
+        window.dispatchEvent(new CustomEvent("archflow:project-changed", { detail: next?.id ?? "" }));
       })
       .catch((reason: Error) => {
         if (!cancelled) setError(reason.message);
-      });
+      }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
@@ -85,12 +83,12 @@ export function ProjectSwitcher() {
       <button
         className={open ? "project-switcher is-open" : "project-switcher"}
         type="button"
-        aria-label={`切换项目，当前项目：${activeProject?.name ?? "冷链产业园"}`}
+        aria-label={`切换项目，当前项目：${activeProject?.name ?? "未选择"}`}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
       >
-        <strong>{activeProject?.name ?? "冷链产业园"}</strong><ChevronDown />
+        <strong>{activeProject?.name ?? (loading ? "正在读取项目…" : "选择或新建项目")}</strong><ChevronDown />
       </button>
 
       {open && (

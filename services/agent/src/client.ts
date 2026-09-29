@@ -1,4 +1,5 @@
 import type { ClaimedJob, GenerationJobDetail, ArtifactUnit, JobCheckpoint, UsageRecord, WorkerProgress } from "./contracts.js";
+import { WorkflowError } from "./errors.js";
 
 export class ApiClient {
   constructor(private readonly baseUrl: string, private readonly token: string) {}
@@ -13,8 +14,9 @@ export class ApiClient {
     if (!response.ok) {
       // Never log provider responses, credentials, or the private project brief.
       const error = await response.json().catch(() => null);
-      const detail = typeof error?.detail === "string" ? error.detail.replaceAll(this.token, "[redacted]").slice(0, 300) : "";
-      throw new Error(detail || `ArchFlow API rejected ${path.split("/").at(-1)} (${response.status})`);
+      const message = typeof error?.detail === "string" ? error.detail : error?.detail?.message;
+      const detail = typeof message === "string" ? message.replaceAll(this.token, "[redacted]").slice(0, 300) : "";
+      throw new WorkflowError(error?.detail?.code === "budget" ? "budget" : "workflow", detail || `ArchFlow API rejected request (${response.status})`);
     }
     return response.status === 204 ? undefined as T : await response.json() as T;
   }

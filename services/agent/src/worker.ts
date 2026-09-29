@@ -5,6 +5,7 @@ import { ApiClient } from "./client.js";
 import { runStep, type ModelConfig } from "./runtime.js";
 import { contextOverride } from "./model-limits.js";
 import type { ClaimedJob } from "./contracts.js";
+import { WorkflowError } from "./errors.js";
 
 export async function processJob(api: ApiClient, claim: ClaimedJob, config: ModelConfig, shutdown: AbortSignal) {
   const lostLease = new AbortController();
@@ -25,7 +26,7 @@ export async function processJob(api: ApiClient, claim: ClaimedJob, config: Mode
   } catch (error) {
     // Cancelled/shutdown/expired leases are recoverable states, not a false failure.
     if (!signal.aborted) {
-      await api.checkpoint(claim.job.id, claim.lease_id, { action: "failure", error: error instanceof Error ? error.message : "Agent step failed." }).catch(() => undefined);
+      await api.checkpoint(claim.job.id, claim.lease_id, { action: "failure", failure_kind: error instanceof WorkflowError ? error.kind : "workflow", error: error instanceof Error ? error.message : "Agent step failed." }).catch(() => undefined);
     }
   } finally { clearInterval(heartbeat); }
 }
