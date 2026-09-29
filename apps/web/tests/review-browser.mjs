@@ -82,7 +82,7 @@ try {
   console.log("Inline draft saved without generation");
   assert.equal(writes.filter(item => item.path.endsWith("/feedback")).length, 0, "Saving inline feedback must not schedule work");
   await card.getByRole("textbox", { name: "V2 整体意见", exact: true }).fill("整体减少背景介绍，保留实施策略。");
-  assert.equal(await page.getByRole("button", { name: "提交反馈，生成修订稿", exact: true }).count(), 1, "Only the card has a submit button");
+  assert.equal(await page.locator(".output-panel").getByRole("button", { name: "提交反馈，生成修订稿", exact: true }).count(), 0, "The preview must not have a second submit entry");
   await card.getByRole("button", { name: "提交反馈，生成修订稿", exact: true }).click();
   await page.locator('[data-job-id="v3"]').waitFor();
   console.log("Combined feedback submitted");
@@ -109,7 +109,7 @@ try {
   const draftFeedback = writes.filter(item => item.path.endsWith("/feedback")).at(-1);
   assert.equal(draftFeedback.body.kind, "draft");
   assert.equal(draftFeedback.body.overall, "");
-  await page.getByRole("button", { name: "确认 V4 修订稿，继续排版", exact: true }).click();
+  await page.getByRole("button", { name: "确认修订稿", exact: true }).click();
   assert.equal(jobs.at(-1).status, "completed");
   assert.equal(await page.locator("[data-job-id]").count(), 4);
   assert.equal(messages.length, 1, "Preview/review cannot rewrite the chat");

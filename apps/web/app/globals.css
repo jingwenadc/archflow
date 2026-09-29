@@ -649,6 +649,8 @@ a { color: inherit; text-decoration: none; }
 .workflow-card button:focus-visible, .title-edit-button:focus-visible { outline: 2px solid #315563; outline-offset: 3px; }
 .review-editor { border-top: 1px solid #e5eaee; padding-top: 12px; display: grid; gap: 10px; }
 .review-toggle { color: #315563 !important; }
+.review-actions { flex-wrap: nowrap; gap: 8px; }
+.review-actions button { white-space: nowrap; padding-inline: 10px; }
 .review-draft { display: grid; gap: 12px; }
 .review-submit { background: #173b45 !important; color: #fff !important; }
 .review-comment { border: 1px solid #dce3e7; border-radius: 8px; padding: 12px; display: grid; gap: 8px; overflow-wrap: anywhere; }

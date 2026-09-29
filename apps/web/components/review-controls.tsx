@@ -75,17 +75,20 @@ export function ReviewProvider({ children, blocked, annotationEditing, onRevisio
   return <ReviewContext.Provider value={{ records, blocked, annotationEditing, submitting, opened, open, load, add, remove, submit }}>{children}</ReviewContext.Provider>;
 }
 
-export function ReviewEditor({ job, version, current }: { job: GenerationJobRecord; version: number; current: boolean }) {
+export function ReviewEditor({ job, version, current, approveAction, cancelAction }: {
+  job: GenerationJobRecord; version: number; current: boolean; approveAction?: ReactNode; cancelAction?: ReactNode;
+}) {
   const reviews = useReviews();
   const state = reviews.records[job.id];
   const comments = state?.comments ?? [];
   const pending = comments.filter(comment => !comment.submitted_job_id);
   const submitted = comments.filter(comment => comment.submitted_job_id);
   const defaultKind: ArtifactKind = ["generating", "final_review"].includes(job.stage) ? "draft" : job.storyboard_units ? "storyboard" : "outline";
+  const reviewReady = current && !job.scope_mismatch && ["waiting_outline", "waiting_storyboard", "waiting_review", "needs_review", "completed"].includes(job.status);
   const [kind, setKind] = useState(defaultKind);
   const [overall, setOverall] = useState("");
   const [hydrated, setHydrated] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(reviewReady);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
   const [sent, setSent] = useState(false);
@@ -103,6 +106,12 @@ export function ReviewEditor({ job, version, current }: { job: GenerationJobReco
   useEffect(() => { if (hydrated) { try { localStorage.setItem(storageKey, JSON.stringify({ overall, kind })); } catch { /* Optional draft persistence. */ } } }, [hydrated, storageKey, overall, kind]);
   useEffect(() => { key.current = null; setSent(false); }, [kind, overall, pending.map(comment => comment.id).join(",")]);
   useEffect(() => { if (reviews.opened === job.id || pending.length) setExpanded(true); }, [reviews.opened, job.id, pending.length]);
+  // Entering any human-review phase opens the same editor. Polling the same
+  // phase does not undo a user's collapse; empty historical editors collapse.
+  useEffect(() => {
+    if (reviewReady) setExpanded(true);
+    else if (!pending.length && !overall.trim()) setExpanded(false);
+  }, [reviewReady, current, defaultKind]);
   useEffect(() => { if (!overall) setKind(defaultKind); }, [defaultKind]);
   async function submit() {
     setError(null); key.current ??= crypto.randomUUID();
@@ -110,8 +119,12 @@ export function ReviewEditor({ job, version, current }: { job: GenerationJobReco
     catch (cause) { setError(cause instanceof Error ? cause.message : "反馈提交失败，草稿保留。请重试。"); }
   }
   return <div className="review-editor">
-    <button className="review-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>审阅反馈{pending.length ? ` · ${pending.length} 条待提交批注` : ""}</button>
-    {expanded && <div className="review-draft">
+    <div className="generation-actions review-actions" role="group" aria-label={`V${version} 审阅操作`}>
+      {approveAction}
+      <button className="review-toggle" aria-expanded={expanded} aria-controls={`review-draft-${job.id}`} onClick={() => setExpanded(value => !value)}>修改意见</button>
+      {cancelAction}
+    </div>
+    {expanded && <div className="review-draft" id={`review-draft-${job.id}`}>
       <label>整体反馈针对<select aria-label={`V${version} 反馈阶段`} value={kind} disabled={reviews.submitting !== null} onChange={event => setKind(event.target.value as ArtifactKind)}>
         <option value="outline">提纲</option>{job.storyboard_units > 0 && <option value="storyboard">内容策划</option>}{["generating", "final_review"].includes(job.stage) && <option value="draft">正文</option>}
       </select></label>
