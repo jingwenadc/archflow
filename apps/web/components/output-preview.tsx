@@ -7,6 +7,7 @@ import { jobStatuses, orderedJobs, workflowState } from "@/lib/workflow";
 import { useReviews } from "./review-controls";
 import { displayCitations } from "@/lib/source-citations";
 import { useCitationSources } from "@/lib/use-citation-sources";
+import { LoadingIcon } from "./icons";
 
 type ExportState = { status: string; requested: boolean; error: string | null; result: { page_count: number; format: string; missing_facts: number } | null };
 const url = (path: string) => `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}${path}`;
@@ -19,6 +20,7 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
   const [units, setUnits] = useState<ArtifactUnit[]>([]);
   const [exported, setExported] = useState<ExportState | null>(null);
   const [page, setPage] = useState(0);
+  const [followLatest, setFollowLatest] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const reviews = useReviews();
@@ -41,12 +43,18 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
   const current = jobs.find(job => job.id === selectedId);
   const latest = versions.at(-1);
   const version = versions.findIndex(job => job.id === selectedId) + 1;
-  const kind = textKind ?? (current?.stage === "storyboarding" || current?.status === "waiting_storyboard" ? "storyboard" : "draft");
+  const kind = textKind ?? (current?.stage === "storyboarding" || current?.status === "waiting_storyboard" || (!current?.completed_units && !!current?.storyboard_units) ? "storyboard" : "draft");
+  const savedUnits = kind === "storyboard" ? detail?.storyboard_units ?? 0 : detail?.completed_units ?? 0;
+  const latestGroup = Math.max(0, Math.ceil(savedUnits / 5) - 1);
+  const live = detail?.status === "running" && detail.stage === (kind === "storyboard" ? "storyboarding" : "generating");
+  const latestLive = latest?.status === "running" && ["storyboarding", "generating"].includes(latest.stage);
+  const latestSaved = latest?.stage === "storyboarding" ? latest.storyboard_units : latest?.completed_units ?? 0;
+  const unitLabel = detail?.module === "concept" ? "页" : "章";
   const pending = (selectedId ? reviews.records[selectedId]?.comments ?? [] : []).filter(item => !item.submitted_job_id);
   useEffect(() => { onAnnotationEditing(editing || saving); return () => onAnnotationEditing(false); }, [editing, saving, onAnnotationEditing]);
   useEffect(() => { if (selectedId) void reviews.load(selectedId); }, [selectedId, reviews.load]);
 
-  useEffect(() => { setDetail(null); setUnits([]); setExported(null); setPage(0); setError(null); setAnnotation(null); setEditing(false); setComment(""); setTextView(false); setTextKind(null); }, [selectedId]);
+  useEffect(() => { setDetail(null); setUnits([]); setExported(null); setPage(0); setFollowLatest(true); setError(null); setAnnotation(null); setEditing(false); setComment(""); setTextView(false); setTextKind(null); }, [selectedId]);
   useEffect(() => {
     if (!selectedId) return;
     let cancelled = false;
@@ -71,6 +79,11 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
 
   useEffect(() => { if (detail?.outline) available.current(); }, [detail?.id, !!detail?.outline]);
   useEffect(() => { if (exported?.status === "ready") setPage(0); }, [selectedId, exported?.status]);
+  useEffect(() => {
+    if (exported?.status === "ready" && !textView) return;
+    if (followLatest && live && !editing && !saving) setPage(latestGroup);
+    else if (savedUnits > 0) setPage(value => Math.min(value, latestGroup));
+  }, [followLatest, live, savedUnits, latestGroup, kind, exported?.status, textView, editing, saving]);
 
   async function requestExport(path: string) {
     const id = selectedId;
@@ -110,7 +123,7 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
       <select id="output-version" value={selectedId ?? ""} disabled={editing || saving} onChange={event => onSelect(event.target.value)}>
         {versions.map((job, index) => <option key={job.id} value={job.id}>V{index + 1} · {job.target_units} {job.module === "concept" ? "页" : "章"} · {jobStatuses[job.status]}</option>)}
       </select>
-      {latest && selectedId !== latest.id && <p className="generation-note">当前查看 V{version}；新版本 V{versions.length} · {jobStatuses[latest.status]}。<button disabled={editing || saving} onClick={() => onSelect(latest.id)}>查看 V{versions.length}</button></p>}
+      {latest && selectedId !== latest.id && <div className="live-version-callout"><span>当前查看 V{version}。V{versions.length}{latestLive ? ` ${latest.stage === "storyboarding" ? "正在策划" : "正在生成内容"} · 已保存 ${latestSaved} / ${latest.target_units} ${latest.module === "concept" ? "页" : "章"}` : ` · ${jobStatuses[latest.status]}`}。</span><button disabled={editing || saving} onClick={() => onSelect(latest.id)}>{latestLive ? "查看实时草稿" : `查看 V${versions.length}`}</button></div>}
     </div>}
     {selectedId && detail?.outline && <div className="review-toolbar">
       {pending.length ? <button onClick={() => reviews.open(selectedId)}>本次反馈 · {pending.length} 条批注 · 去确认卡统一提交</button> : <p className="generation-note">选中同一段文字可添加批注，与确认卡里的整体意见一起提交。</p>}
@@ -129,6 +142,7 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
         {citations.error && <p role="alert" className="generation-error">来源文件名暂时无法读取，引用仍显示原始编号。{citations.error}</p>}
         {!detail.outline && <div className="output-empty"><strong>{workflowState(detail).label}</strong><p className="generation-note">提纲准备好后会显示在这里，确认操作在对话中。</p>{versions.some(item => item.id !== selectedId) && <p className="generation-note">也可以从上方选择已有版本继续查看。</p>}</div>}
         {detail.scope_mismatch && <p className="generation-error">此旧版本的提纲与交付数量需要重新确认；保留原成果供参考，不应按此范围继续生成。</p>}
+        {live && <div className="live-output-status" role="status" aria-live="polite"><LoadingIcon className="loading-icon" /><div><strong>V{version} {kind === "storyboard" ? "策划草稿" : "内容草稿"}持续更新中</strong><span>已保存 {savedUnits} / {detail.target_units} {unitLabel}；每批保存后显示，尚未完成审阅或排版。</span></div>{savedUnits > 5 && !followLatest && <button onClick={() => { setFollowLatest(true); setPage(latestGroup); }}>跟随最新</button>}</div>}
         <div ref={contentRoot} onPointerUp={captureSelection} onKeyUp={captureSelection}>
         {detail.outline && <details open={!exported?.result}><summary>章节提纲 · V{version}</summary><p className="generation-note">{detail.outline.sections.length} 个{detail.module === "concept" ? "章节" : "分组"} · 已确认交付 {detail.target_units} {detail.module === "concept" ? "页" : "章"}</p><p data-review-kind="outline" data-review-index={0}>{show(detail.outline.summary)}</p><ol>{detail.outline.sections.map((section, index) => <li key={section.start_unit} data-review-kind="outline" data-review-index={index + 1}><strong><span data-review-exclude>第{section.start_unit === section.end_unit ? section.start_unit : `${section.start_unit}–${section.end_unit}`}{detail.module === "concept" ? "页" : "章"} · </span>{show(section.title)}</strong>{"\n"}<p>{show(section.objective)}</p></li>)}</ol></details>}
         {exported?.requested && ["queued", "processing"].includes(exported.status) && <p role="status">正在排版和渲染可编辑文件…</p>}
@@ -142,9 +156,9 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
           <div className="generation-actions"><button disabled={page === 0 || editing} onClick={() => setPage(value => value - 1)}>上一页</button><span>{page + 1} / {exported.result.page_count}</span><button disabled={page + 1 >= exported.result.page_count || editing} onClick={() => setPage(value => value + 1)}>下一页</button></div></>}
         </>}
         {(exported?.status !== "ready" || textView) && <>
-          {detail.storyboard_units > 0 && ["generating", "final_review"].includes(detail.stage) && <label className="artifact-text-kind">审阅内容<select aria-label="审阅内容" value={kind} disabled={editing} onChange={event => { setTextKind(event.target.value as "storyboard" | "draft"); setPage(0); }}><option value="draft">正文</option><option value="storyboard">内容策划</option></select></label>}
-          {units.map(unit => <article className="generation-unit" key={unit.unit_index}><p className="eyebrow">{kind === "storyboard" ? detail.module === "concept" ? "逐页策划" : "逐章策划" : "内容草稿"} · {unit.unit_index}</p><div data-review-kind={kind} data-review-index={unit.unit_index}><h3>{show(unit.title)}</h3>{"\n"}<p className="generation-body">{show(unit.body)}</p></div>{unit.missing_facts.length > 0 && <p className="generation-error">待确认：{unit.missing_facts.map(show).join("；")}</p>}</article>)}
-          {units.length > 0 && <div className="generation-actions"><button disabled={page === 0 || editing} onClick={() => setPage(value => value - 1)}>上一组</button><span>第 {page * 5 + 1} {detail.module === "concept" ? "页" : "章"}起</span><button disabled={(page + 1) * 5 >= detail.target_units || editing} onClick={() => setPage(value => value + 1)}>下一组</button></div>}
+          {detail.storyboard_units > 0 && ["generating", "final_review"].includes(detail.stage) && <label className="artifact-text-kind">审阅内容<select aria-label="审阅内容" value={kind} disabled={editing} onChange={event => { setTextKind(event.target.value as "storyboard" | "draft"); setFollowLatest(false); setPage(0); }}><option value="draft">正文</option><option value="storyboard">内容策划</option></select></label>}
+          {units.map(unit => <article className="generation-unit" key={unit.unit_index}><p className="eyebrow">{kind === "storyboard" ? detail.module === "concept" ? "逐页策划" : "逐章策划" : "内容草稿"} · {unit.unit_index}</p><div data-review-kind={kind} data-review-index={unit.unit_index}><h3>{show(unit.title)}</h3>{"\n"}<p className="generation-body">{show(unit.body)}</p></div>{unit.missing_facts.length > 0 && <details className="unit-verification"><summary>资料缺口与后续核验 · {unit.missing_facts.length} 项</summary><p>不必逐项填写才能继续；对外提交前请核对影响关键结论的内容。</p><ul>{unit.missing_facts.map((fact, index) => <li key={index}>{show(fact)}</li>)}</ul></details>}</article>)}
+          {units.length > 0 && <div className="generation-actions"><button disabled={page === 0 || editing} onClick={() => { setFollowLatest(false); setPage(value => value - 1); }}>上一组</button><span>第 {page * 5 + 1} {unitLabel}起{live && followLatest ? " · 自动跟随最新" : ""}</span><button disabled={(page + 1) * 5 >= savedUnits || editing} onClick={() => { setFollowLatest(false); setPage(value => value + 1); }}>下一组</button></div>}
         </>}
         </div>
       </>}
