@@ -19,10 +19,12 @@ from .models import (
     ArtifactUnit, ClaimedJob, DocumentPlan, GenerationBatchRecord, GenerationJobCreate,
     GenerationJobDetail, GenerationJobEvent, GenerationJobRecord, JobCheckpoint,
     ReviewResult, SkillSnapshot, UsageRecord, AgentMemory, WorkerProgress, RunLimits,
+    ReviewSubmission,
 )
 from .materials import DocumentRepository
 from .requirements import scope_mismatch, plan_scope_error
 from .run_settings import RunSettingsRepository
+from .reviews import Reviews
 
 
 def timestamp() -> str:
@@ -117,6 +119,7 @@ class JobRepository:
                 CREATE INDEX IF NOT EXISTS generation_project_idx ON generation_jobs(project_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS generation_events_job_idx ON generation_events(job_id, id DESC);
             """)
+            Reviews.initialize(db)
             db.execute("BEGIN IMMEDIATE")
             if "failure_kind" not in {column[1] for column in db.execute("PRAGMA table_info(generation_jobs)")}:
                 db.execute("ALTER TABLE generation_jobs ADD COLUMN failure_kind TEXT")
@@ -155,8 +158,10 @@ class JobRepository:
 
     def create(self, request: GenerationJobCreate, key: str, skills: list[SkillSnapshot],
                model: str, review_model: str, sources: list[dict] | None = None,
-               parent_id: str | None = None, revision_units: list[int] | None = None) -> GenerationJobDetail:
-        fingerprint = hashlib.sha256((request.model_dump_json() + str(parent_id) + str(revision_units)).encode()).hexdigest()
+               parent_id: str | None = None, revision_units: list[int] | None = None,
+               review_request: ReviewSubmission | None = None) -> GenerationJobDetail:
+        fingerprint = hashlib.sha256((request.model_dump_json() + str(parent_id) + str(revision_units) +
+                                      (review_request.model_dump_json() if review_request else "")).encode()).hexdigest()
         defaults = self.run_settings.get()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -190,12 +195,28 @@ class JobRepository:
                            (job_id, index, start, min(request.target_units, start + request.batch_size - 1), "pending"))
             if parent_id:
                 parent = self.require(db, parent_id)
-                db.execute("UPDATE generation_jobs SET stage='generating',outline=? WHERE id=?", (parent["outline"], job_id))
-                db.execute("INSERT INTO generation_units SELECT ?,kind,unit_index,payload FROM generation_units WHERE job_id=?", (job_id, parent_id))
-                for batch in db.execute("SELECT * FROM generation_batches WHERE job_id=?", (job_id,)).fetchall():
-                    if not any(batch["start_unit"] <= i <= batch["end_unit"] for i in revision_units or []):
-                        db.execute("UPDATE generation_batches SET status='completed',review=? WHERE job_id=? AND batch_index=?",
-                                   (json.dumps({"passed": True, "summary": "沿用未修改页面", "issues": []}), job_id, batch["batch_index"]))
+                self.require_consistent_scope(parent)
+                if (parent["project_id"], parent["conversation_id"], parent["module"], parent["target_units"]) != (request.project_id, request.conversation_id, request.module, request.target_units):
+                    raise HTTPException(409, "修订必须属于同一项目、对话及交付范围。")
+                snapshot = Reviews.prepare(db, parent, review_request, job_id) if review_request else None
+                kind = snapshot.kind if snapshot else "draft"
+                if kind != "outline":
+                    db.execute("UPDATE generation_jobs SET stage=?,outline=? WHERE id=?", ("storyboarding" if kind == "storyboard" else "generating", parent["outline"], job_id))
+                    db.execute("INSERT INTO generation_units SELECT ?,kind,unit_index,payload FROM generation_units WHERE job_id=? AND (?='draft' OR kind='storyboard')", (job_id, parent_id, kind))
+                    phase_comments = [comment for comment in snapshot.comments if comment.kind == kind] if snapshot else []
+                    targets = revision_units or (list(range(1, request.target_units + 1)) if any(comment.anchor is None for comment in phase_comments)
+                                                else [comment.anchor.unit_index for comment in phase_comments if comment.anchor])
+                    if kind == "storyboard":
+                        db.executemany("DELETE FROM generation_units WHERE job_id=? AND kind='storyboard' AND unit_index=?", [(job_id, index) for index in targets])
+                    else:
+                        saved = {row[0] for row in db.execute("SELECT unit_index FROM generation_units WHERE job_id=? AND kind='draft'", (job_id,))}
+                        targets = sorted(set(targets) | (set(range(1, request.target_units + 1)) - saved))
+                        for batch in db.execute("SELECT * FROM generation_batches WHERE job_id=?", (job_id,)).fetchall():
+                            passed = db.execute("SELECT 1 FROM generation_batches WHERE job_id=? AND batch_index=? AND status='completed'", (parent_id, batch["batch_index"])).fetchone()
+                            if passed and not any(batch["start_unit"] <= i <= batch["end_unit"] for i in targets):
+                                db.execute("UPDATE generation_batches SET status='completed',review=? WHERE job_id=? AND batch_index=?",
+                                           (json.dumps({"passed": True, "summary": "沿用未修改页面", "issues": []}), job_id, batch["batch_index"]))
+                    db.execute("UPDATE job_sources SET revision_units=? WHERE job_id=?", (json.dumps(sorted(set(targets))), job_id))
             self.event(db, job_id, "queued", "任务已排队；产物为内容草稿。")
         return self.detail(job_id)
 
@@ -208,6 +229,8 @@ class JobRepository:
             })) for batch in db.execute("SELECT * FROM generation_batches WHERE job_id=? ORDER BY batch_index", (job_id,))]
             storyboard_count = db.execute("SELECT count(*) FROM generation_units WHERE job_id=? AND kind='storyboard'", (job_id,)).fetchone()[0]
             progress = db.execute("SELECT message FROM generation_events WHERE job_id=? AND event_type='progress' ORDER BY id DESC LIMIT 1", (job_id,)).fetchone()
+            review_request = Reviews.snapshot(db, job_id)
+            storyboard_range = self.next_storyboard_range(db, row) if row["stage"] == "storyboarding" else None
         completed = sum(batch.end_unit - batch.start_unit + 1 for batch in batches if batch.status == "completed")
         outline = json.loads(row["outline"]) if row["outline"] else None
         if outline is not None:
@@ -219,18 +242,21 @@ class JobRepository:
             "outline": outline,
             "final_review": json.loads(row["final_review"]) if row["final_review"] else None,
             "progress": progress[0] if progress else None,
+            "review_request": review_request, "parent_id": review_request.parent_id if review_request else None,
+            "feedback_kind": review_request.kind if review_request else None,
+            "storyboard_range": storyboard_range,
         }))
 
     def list(self, project_id: str, conversation_id: str | None = None) -> list[GenerationJobRecord]:
         with self.connect() as db:
-            fields = [name for name in GenerationJobRecord.model_fields if name not in {"completed_units", "storyboard_units", "scope_mismatch"}]
+            fields = [name for name in GenerationJobRecord.model_fields if name not in {"completed_units", "storyboard_units", "scope_mismatch", "parent_id", "feedback_kind"}]
             # History needs immutable briefs, not full plans, skills or page payloads.
-            sql = f"""SELECT {','.join('j.' + name for name in fields)},j.outline,
+            sql = f"""SELECT {','.join('j.' + name for name in fields)},j.outline,r.parent_id,r.kind AS feedback_kind,
                 COALESCE((SELECT SUM(end_unit-start_unit+1) FROM generation_batches b
                     WHERE b.job_id=j.id AND b.status='completed'), 0) AS completed_units,
                 (SELECT COUNT(*) FROM generation_units u
                     WHERE u.job_id=j.id AND u.kind='storyboard') AS storyboard_units
-                FROM generation_jobs j WHERE j.project_id=?"""
+                FROM generation_jobs j LEFT JOIN review_runs r ON r.job_id=j.id WHERE j.project_id=?"""
             args: list = [project_id]
             if conversation_id:
                 sql += " AND j.conversation_id=?"
@@ -283,6 +309,17 @@ class JobRepository:
                           sources=self.documents.catalog(detail.id), revision_units=self.documents.revisions(detail.id),
                           memory=AgentMemory.model_validate_json(memory[0]) if memory else None)
 
+    @staticmethod
+    def next_storyboard_range(db: sqlite3.Connection, row: sqlite3.Row | dict) -> list[int]:
+        saved = {unit[0] for unit in db.execute("SELECT unit_index FROM generation_units WHERE job_id=? AND kind='storyboard'", (row["id"],))}
+        start = next((index for index in range(1, row["target_units"] + 1) if index not in saved), None)
+        if start is None:
+            return []
+        end = start
+        while end < min(row["target_units"], start + row["batch_size"] - 1) and end + 1 not in saved:
+            end += 1
+        return [start, end]
+
     def progress(self, job_id: str, lease_id: str, request: WorkerProgress) -> None:
         messages = {"skills": "正在应用设计技能", "materials": "正在阅读项目资料",
                     "planning": "正在整理章节提纲", "storyboarding": "正在策划每页内容",
@@ -318,10 +355,13 @@ class JobRepository:
                     return self.detail(job_id)
                 new_status, stage = "cancelled", row["stage"]
             elif action == "approve":
-                stages = {"waiting_outline": "storyboarding", "waiting_storyboard": "generating"}
+                stages = {"waiting_outline": "storyboarding", "waiting_storyboard": "generating", "waiting_review": "final_review"}
                 if row["status"] not in stages:
                     raise HTTPException(409, "This job is not waiting for approval.")
-                new_status, stage = "queued", stages[row["status"]]
+                new_status, stage = "completed" if row["status"] == "waiting_review" else "queued", stages[row["status"]]
+                if row["status"] == "waiting_storyboard":
+                    # Scoped storyboard holes do not constrain later drafting.
+                    db.execute("UPDATE job_sources SET revision_units='[]' WHERE job_id=?", (job_id,))
             elif action == "retry":
                 if row["status"] != "failed":
                     raise HTTPException(409, "Only failed jobs can be retried; review failures need human changes.")
@@ -396,6 +436,7 @@ class JobRepository:
                 slugs = {skill["slug"] for skill in json.loads(row["skills"])}
                 if plan.skill_slug not in slugs:
                     raise HTTPException(422, "Select a skill from this job's catalog.")
+                Reviews.validate_plan(Reviews.snapshot(db, job_id), plan)
                 db.execute("UPDATE generation_jobs SET outline=? WHERE id=?", (plan.model_dump_json(), job_id))
                 state = "waiting_outline"
             elif checkpoint.action in {"storyboard", "draft"}:
@@ -404,8 +445,10 @@ class JobRepository:
                     raise HTTPException(409, "Batch is not allowed at the current stage.")
                 kind = "storyboard" if stage == "storyboarding" else "draft"
                 if kind == "storyboard":
-                    start = db.execute("SELECT count(*)+1 FROM generation_units WHERE job_id=? AND kind='storyboard'", (job_id,)).fetchone()[0]
-                    end = min(row["target_units"], start + row["batch_size"] - 1)
+                    pending_range = self.next_storyboard_range(db, row)
+                    if not pending_range:
+                        raise HTTPException(409, "策划已保存完毕。")
+                    start, end = pending_range
                 else:
                     if batch is None or batch["draft_count"] >= row["max_revision_rounds"] + 1:
                         raise HTTPException(409, "Batch revision budget exhausted.")
@@ -433,7 +476,7 @@ class JobRepository:
                                (job_id, kind, unit.unit_index, unit.model_dump_json()))
                 if kind == "draft":
                     db.execute("UPDATE generation_batches SET status='draft',draft_count=draft_count+1,review=NULL WHERE job_id=? AND batch_index=?", (job_id, batch["batch_index"]))
-                elif end == row["target_units"]:
+                elif db.execute("SELECT COUNT(*) FROM generation_units WHERE job_id=? AND kind='storyboard'", (job_id,)).fetchone()[0] == row["target_units"]:
                     state = "waiting_storyboard"
             elif checkpoint.action == "review":
                 if stage != "generating" or batch is None or batch["status"] != "draft" or checkpoint.review is None:
@@ -453,7 +496,8 @@ class JobRepository:
                 if checkpoint.review.passed and checkpoint.review.issues:
                     raise HTTPException(422, "A passing review cannot have unresolved issues.")
                 db.execute("UPDATE generation_jobs SET final_review=? WHERE id=?", (checkpoint.review.model_dump_json(), job_id))
-                state = "completed" if checkpoint.review.passed else "needs_review"
+                snapshot = Reviews.snapshot(db, job_id)
+                state = ("waiting_review" if snapshot and snapshot.kind == "draft" else "completed") if checkpoint.review.passed else "needs_review"
             db.execute("UPDATE generation_jobs SET status=?,stage=?,updated_at=? WHERE id=?", (state, stage, timestamp(), job_id))
             self.event(db, job_id, checkpoint.action, {
                 "plan": "章节计划已保存，等待用户批准。", "storyboard": "逐页故事板批次已保存。",

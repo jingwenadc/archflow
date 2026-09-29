@@ -43,6 +43,7 @@ await context.route(/\/api\/v1\//, async route => {
     if (path === "/api/v1/settings/run-limits") return reply(limits);
     if (path === "/api/v1/jobs") return reply([...jobs].reverse());
     if (path.endsWith("/units")) return reply([]);
+    if (path.endsWith("/comments")) return reply([]);
     if (path.endsWith("/export")) return reply({ status: "not_requested", requested: false, result: null, error: null });
     const match = /\/jobs\/(v\d+)$/.exec(path);
     if (match) return reply(jobs.find(job => job.id === match[1]));

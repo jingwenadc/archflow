@@ -5,7 +5,15 @@ import ts from "typescript";
 
 const source = await readFile(new URL("../lib/workflow.ts", import.meta.url), "utf8");
 const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
-const { requirementBrief, conversationTimeline, orderedJobs, workflowState, workflowSteps, failureHelp } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+const { requirementBrief, conversationTimeline, orderedJobs, workflowState, workflowSteps, failureHelp, isActiveJob } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+
+test("review revisions wait for human approval without a working spinner", () => {
+  const job = { module: "concept", stage: "final_review", status: "waiting_review", target_units: 40, completed_units: 40 };
+  assert.equal(workflowState(job).index, 3);
+  assert.equal(workflowState(job).working, false);
+  assert.match(workflowState(job).label, /核对反馈后确认排版/);
+  assert.equal(isActiveJob(job), true);
+});
 
 test("progress reflects the actual stage; context failures never suggest buying more budget", () => {
   const job = { module: "concept", stage: "planning", status: "running", completed_units: 0, storyboard_units: 0, target_units: 17, total_tokens: 3700, max_total_tokens: 10000, model_calls: 3, max_model_calls: 50, failure_kind: "context", error: "arbitrary diagnostic text" };

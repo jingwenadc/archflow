@@ -31,6 +31,7 @@ class MemoryApi extends ApiClient {
     this.steps.push(body.step); if (body.memory) this.memory = body.memory;
   }
   override async units(_id: string, kind: "draft" | "storyboard", offset: number, limit = 10) { return this.data[kind].slice(offset, offset + limit); }
+  override async reviewUnits(_id: string, kind: "draft" | "storyboard", offset: number, limit = 5) { return this.data[kind].slice(offset, offset + limit); }
   override async call(_id: string, _lease: string, action: "reserve" | "usage", usage: UsageRecord) {
     if (action === "reserve") { if (this.job.model_calls >= this.job.max_model_calls) throw new WorkflowError("budget", "Budget exhausted"); this.job.model_calls++; }
     else this.job.total_tokens += usage.total_tokens;
@@ -79,10 +80,10 @@ async function provider(pressure = false) {
       for (const event of [{ type: "response.created", response: { ...response, status: "in_progress", output: [] } }, { type: "response.output_item.added", output_index: 0, item: { ...item, content: [] } }, { type: "response.content_part.added", item_id: item.id, output_index: 0, content_index: 0, part: { type: "output_text", text: "", annotations: [] } }, { type: "response.output_text.delta", item_id: item.id, output_index: 0, content_index: 0, delta: text }, { type: "response.output_item.done", output_index: 0, item }, { type: "response.completed", response }]) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
       res.end(); return;
     }
-    assert.deepEqual(payload.tools.map((item: { name: string }) => item.name).sort(), ["read", "read_units", "submit"]);
     const taskText = input.filter(item => item.role === "user").flatMap(item => item.content ?? []).find(item => item.text?.startsWith('{"task"'))?.text;
     if (taskText) lastPrompt = JSON.parse(taskText);
     const prompt = lastPrompt;
+    assert.deepEqual(payload.tools.map((item: { name: string }) => item.name).sort(), prompt.human_feedback ? ["read", "read_previous_units", "read_units", "submit"] : ["read", "read_units", "submit"]);
     const hasRead = input.some(item => item.type === "function_call" && item.name === "read");
     let name = "read"; let args: unknown = { path: "/skills/test-skill/SKILL.md" };
     if (hasRead) {
@@ -95,6 +96,9 @@ async function provider(pressure = false) {
     }
     if (pressure && hasRead && !inspectedLargePage) {
       name = "read_units"; args = { kind: "storyboard", offset: 0, limit: 1 }; inspectedLargePage = true;
+    }
+    if (prompt.human_feedback && hasRead && !input.some(item => item.type === "function_call" && item.name === "read_previous_units")) {
+      name = "read_previous_units"; args = { kind: "draft", offset: 0, limit: 1 };
     }
     const argumentsText = JSON.stringify(args);
     const item = { type: "function_call", id: `fc_${requests.length}`, call_id: `call_${requests.length}`, name, arguments: argumentsText, status: "completed" };
@@ -136,6 +140,27 @@ test("Pi selects/reads skills, pauses for two approvals, iterates revisions and 
     assert.equal(api.job.total_tokens, endpoint.requests.length * 120);
     assert.ok(endpoint.requests.some(request => request.model === "review-model"));
     assert.equal(api.data.draft.length, 8);
+  } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
+test("human feedback is phase- and location-bound in the real Pi request and can read the original", async () => {
+  const endpoint = await provider(); const workDir = await mkdtemp(join(tmpdir(), "archflow-review-test-"));
+  const api = new MemoryApi();
+  const makeComment = (id: string, kind: "outline" | "storyboard" | "draft", unit_index: number, body: string) => ({ id, job_id: "original", kind, body, anchor: { unit_index, quote: "Original quote" }, created_at: "now" });
+  api.job.stage = "generating";
+  api.job.outline = { skill_slug: "test-skill", summary: "Approved", target_units: 8, sections: [{ title: "Project", start_unit: 1, end_unit: 8, objective: "Approved scope" }] };
+  api.job.review_request = { parent_id: "original", kind: "draft", comments: [makeComment("a", "draft", 2, "Make this sentence clearer"), makeComment("b", "draft", 7, "For another batch"), makeComment("c", "storyboard", 2, "Only for storyboard")] };
+  api.data.draft = [{ unit_index: 1, title: "Original", body: "Original quote", evidence: ["user-brief"], missing_facts: [] }];
+  try {
+    await runStep(api, await api.claimSnapshot(), { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir }, new AbortController().signal);
+    const prompts = endpoint.requests.flatMap(request => request.input as Array<{ role?: string; content?: Array<{ text?: string }> }>)
+      .filter(item => item.role === "user").flatMap(item => item.content ?? []).filter(item => item.text?.startsWith('{"task"')).map(item => JSON.parse(item.text!));
+    assert.ok(prompts.length);
+    assert.deepEqual(prompts[0].human_feedback.comments.map((comment: { id: string }) => comment.id), ["a"]);
+    assert.equal(prompts[0].brief, api.job.goal);
+    assert.equal(prompts[0].target_units, 8);
+    assert.equal(prompts[0].human_feedback.comments[0].anchor.quote, "Original quote");
+    assert.ok(endpoint.requests.some(request => JSON.stringify(request.input).includes("read_previous_units")));
   } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
 });
 

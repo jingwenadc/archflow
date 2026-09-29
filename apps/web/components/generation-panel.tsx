@@ -10,6 +10,7 @@ import { ConversationMessage } from "./conversation-message";
 import { OutputPreview } from "./output-preview";
 import { WorkflowProgress } from "./workflow-progress";
 import { useRunSettings } from "./run-settings";
+import { ReviewEditor, ReviewProvider } from "./review-controls";
 
 export function GenerationPanel({ projectId, conversationId, module, messages, outputMount, onOutputAvailable, materialsReady, ready, sendingMessage }: {
   projectId: string; conversationId: string | null; module: "concept" | "bid" | "drawing"; messages: Message[];
@@ -23,6 +24,7 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
   const [job, setJob] = useState<GenerationJobDetail | null>(null);
   const [jobs, setJobs] = useState<GenerationJobRecord[]>([]);
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [annotationEditing, setAnnotationEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -51,6 +53,7 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
   }
 
   function selectPreview(id: string) {
+    if (annotationEditing && id !== previewId) { setError("请先将右侧批注加入本次反馈，或取消批注后切换版本。"); return; }
     setPreviewId(id);
     try { localStorage.setItem(previewKey, id); } catch { /* Preview works without browser storage. */ }
   }
@@ -155,18 +158,19 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
     const current = record.id === job?.id;
     const failure = failureHelp(record);
     return <section className="workflow-card confirmed-requirement" aria-label={`已确认需求 V${version}`} data-job-id={record.id}>
-      <div className="requirement-card-heading"><h3>已确认需求 · V{version}</h3><button className="text-button" onClick={() => { selectPreview(record.id); onOutputAvailable(); }}>查看 V{version} 成果</button></div>
+      <div className="requirement-card-heading"><h3>已确认需求 · V{version}</h3><button className="text-button" disabled={annotationEditing && record.id !== previewId} onClick={() => { selectPreview(record.id); onOutputAvailable(); }}>查看 V{version} 成果</button></div>
       <p className="requirement-summary">{record.goal.length > 300 ? `${record.goal.slice(0, 300)}…` : record.goal}</p>
       <p className="generation-note">{record.target_units} {module === "concept" ? "页" : "章"}{!current && ` · ${jobStatuses[record.status]}`}</p>
       {record.scope_mismatch && <p className="generation-error">此旧版本的文字要求与确认数量不一致。原记录保留，请在下方重新确认交付范围。</p>}
       {record.count_override && <p className="generation-note">交付数量以确认时手动设置的 {record.target_units} {module === "concept" ? "页" : "章"}为准。</p>}
       <details><summary>查看完整需求</summary><p>{record.goal}</p></details>
+      {record.parent_id && <p className="generation-note">基于 V{versions.findIndex(item => item.id === record.parent_id) + 1} 的审阅反馈修订；原版保留。</p>}
       {current && job && <div className="workflow-task" aria-label={`V${version} 任务状态`} aria-live="polite">
         <WorkflowProgress job={job} />
         {hasNewRequest && !generating && <p className="generation-note">已收到新需求，请确认下方新版本；本版需求与成果保留。</p>}
         {job.status === "failed" && !job.scope_mismatch && <p role="alert">{failure.message}</p>}
         <div className="generation-actions">
-          {!pendingRequirement && ["waiting_outline", "waiting_storyboard"].includes(job.status) && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/approve`)}>{job.status === "waiting_outline" ? `批准 V${version} 提纲，继续${planningLabel}` : `批准 V${version} ${planningLabel}并授权生成全部内容`}</button>}
+          {!pendingRequirement && ["waiting_outline", "waiting_storyboard", "waiting_review"].includes(job.status) && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/approve`)}>{job.status === "waiting_outline" ? `批准 V${version} 提纲，继续${planningLabel}` : job.status === "waiting_storyboard" ? `批准 V${version} ${planningLabel}并授权生成全部内容` : `确认 V${version} 修订稿，继续排版`}</button>}
           {isActiveJob(job) && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/cancel`)}>取消任务</button>}
           {!pendingRequirement && job.status === "failed" && failure.kind !== "budget" && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/retry`)}>{failure.retry}</button>}
           {!pendingRequirement && job.status === "failed" && failure.kind === "budget" && <><button disabled={busy || !limits || Math.max(limits.max_total_tokens, job.max_total_tokens) <= job.total_tokens || Math.max(limits.max_model_calls, job.max_model_calls) <= job.model_calls} onClick={() => { if (limits) void perform(`/api/v1/jobs/${job.id}/continue`, { max_model_calls: Math.max(limits.max_model_calls, job.max_model_calls), max_total_tokens: Math.max(limits.max_total_tokens, job.max_total_tokens) }); }}>按顶部运行设置继续</button><button onClick={openSettings}>调整运行设置</button></>}
@@ -175,12 +179,13 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
         {job.final_review && !job.final_review.passed && <p className="generation-error">{job.final_review.summary} {job.final_review.issues.join("；")}</p>}
         <details><summary>技术诊断与用量</summary>{job.error && <p>{job.error}</p>}<p>{job.model_calls} / {job.max_model_calls} 次调用 · {job.total_tokens.toLocaleString()} / {job.max_total_tokens.toLocaleString()} 累计 tokens</p>{["completed", "needs_review", "failed", "cancelled"].includes(job.status) && <a href={jobDownloadUrl(job.id)}>下载诊断数据（JSON）</a>}</details>
       </div>}
+      <ReviewEditor job={record} version={version} current={current} />
     </section>;
   }
 
   const canStart = !loading && (!jobs.length || !!job) && !busy && !sendingMessage && enabled && materialsReady && !generating && !!limits && resolution?.goal === goal && !!goal.trim() && goal.length <= 20000 && count !== null;
-  return <>
-    {module !== "drawing" && outputMount && createPortal(<OutputPreview jobs={jobs} selectedId={previewId} onSelect={selectPreview} onOutputAvailable={onOutputAvailable} />, outputMount)}
+  return <ReviewProvider blocked={generating || busy || sendingMessage} annotationEditing={annotationEditing} onRevision={next => { remember(next); if (!previewId) selectPreview(next.id); }}>
+    {module !== "drawing" && outputMount && createPortal(<OutputPreview jobs={jobs} selectedId={previewId} onSelect={selectPreview} onOutputAvailable={onOutputAvailable} onAnnotationEditing={setAnnotationEditing} />, outputMount)}
     {ready && conversationTimeline(messages, jobs).map(entry => entry.type === "message"
       ? <ConversationMessage key={`message:${entry.message.id}`} message={entry.message} />
       : <div key={`job:${entry.job.id}`}>{confirmedCard(entry.job, entry.version)}</div>)}
@@ -204,5 +209,5 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
       {!enabled && <p>模型服务尚未启用，需求已保存。管理员配置后可以继续。</p>}
       {!materialsReady && <p>项目资料仍在解析，或有文件失败。请在左侧等待、重试或排除失败文件。</p>}
     </section>}
-  </>;
+  </ReviewProvider>;
 }

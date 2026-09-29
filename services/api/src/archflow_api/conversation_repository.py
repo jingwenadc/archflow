@@ -151,7 +151,7 @@ class ConversationRepository:
                 return
             connection.execute("UPDATE conversations SET deleted_at=?,updated_at=? WHERE id=?", (now, now, conversation_id))
             if connection.execute("SELECT 1 FROM sqlite_master WHERE name='generation_jobs'").fetchone():
-                unfinished = "conversation_id=? AND status IN ('queued','running','waiting_outline','waiting_storyboard','failed')"
+                unfinished = "conversation_id=? AND status IN ('queued','running','waiting_outline','waiting_storyboard','waiting_review','failed')"
                 connection.execute(
                     f"INSERT INTO generation_events(job_id,event_type,message,created_at) SELECT id,'cancel',?,? FROM generation_jobs WHERE {unfinished}",
                     ("对话已删除，未完成任务已取消；已保存内容保留。", now, conversation_id),

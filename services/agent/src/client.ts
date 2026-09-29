@@ -26,6 +26,9 @@ export class ApiClient {
   units(id: string, kind: "draft" | "storyboard", offset: number, limit = 10) {
     return this.request<ArtifactUnit[]>(`/api/v1/jobs/${id}/units?kind=${kind}&offset=${offset}&limit=${limit}`);
   }
+  reviewUnits(id: string, kind: "draft" | "storyboard", offset: number, limit = 5) {
+    return this.request<ArtifactUnit[]>(`/internal/jobs/${id}/review-units?kind=${kind}&offset=${offset}&limit=${limit}`);
+  }
   sources(id: string, query = "", sourceId?: string) {
     const params = new URLSearchParams({ query, ...(sourceId ? { source_id: sourceId } : {}) });
     return this.request<Array<{id: string; file: string; role: string; page: number; text: string; image_id?: string}>>(`/internal/jobs/${id}/sources?${params}`);

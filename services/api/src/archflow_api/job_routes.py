@@ -13,10 +13,12 @@ from .job_repository import JobRepository, snapshot_skills
 from .models import (
     ArtifactUnit, ClaimedJob, GenerationJobCreate, GenerationJobDetail,
     GenerationJobEvent, GenerationJobRecord, JobCheckpoint, UsageRecord, WorkerProgress, RunLimits,
+    ReviewComment, ReviewCommentCreate, ReviewSubmission, SkillSnapshot,
 )
 from .project_repository import ProjectRepository
 from .materials import DocumentRepository, collect_materials
 from .artifacts import queue_export, export_status, exported_file
+from .reviews import Reviews
 
 
 def job_routers(settings: Settings, projects: ProjectRepository,
@@ -72,13 +74,16 @@ def job_routers(settings: Settings, projects: ProjectRepository,
             raise HTTPException(422, "请提供有效的模型调用与累计 token 上限。")
         try:
             body = GenerationJobCreate(project_id=old.project_id, conversation_id=old.conversation_id, module=old.module,
-                                       goal=(old.goal + "\n本次修改要求：" + instruction), target_units=old.target_units, count_override=old.count_override,
+                                       goal=old.goal, target_units=old.target_units, count_override=old.count_override,
                                        batch_size=old.batch_size, max_revision_rounds=old.max_revision_rounds,
                                        **limits.model_dump())
         except ValueError:
             raise HTTPException(422, "完整需求过长或交付数量改变，请精简需求或重新确认完整范围；不会截断原需求。")
-        created = jobs.create(body, idempotency_key or str(uuid4()), snapshot_skills(settings.repository_root), settings.llm_model, settings.review_model,
-                              sources=documents.sources(old.id), parent_id=old.id, revision_units=sorted(set(indices)))
+        with jobs.connect() as db:
+            skills = [SkillSnapshot(**value) for value in json.loads(jobs.require(db, old.id)["skills"])]
+        created = jobs.create(body, idempotency_key or str(uuid4()), skills, settings.llm_model, settings.review_model,
+                              sources=documents.sources(old.id), parent_id=old.id, revision_units=sorted(set(indices)),
+                              review_request=ReviewSubmission(kind="draft", overall=instruction))
         return jobs.detail(created.id)
 
     @public.get("", response_model=list[GenerationJobRecord])
@@ -94,6 +99,47 @@ def job_routers(settings: Settings, projects: ProjectRepository,
     def get_units(job_id: str, kind: Literal["storyboard", "draft"] = "draft",
                   offset: int = Query(0, ge=0), limit: int = Query(10, ge=1, le=20)) -> list[ArtifactUnit]:
         return jobs.units(job_id, kind, offset, limit)
+
+    @public.get("/{job_id}/comments", response_model=list[ReviewComment])
+    def comments(job_id: str):
+        with jobs.connect() as db:
+            jobs.require(db, job_id)
+            return Reviews.comments(db, job_id)
+
+    @public.post("/{job_id}/comments", response_model=ReviewComment, status_code=201)
+    def add_comment(job_id: str, request: ReviewCommentCreate,
+                    idempotency_key: Annotated[str | None, Header(max_length=200)] = None):
+        with jobs.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            return Reviews.add(db, jobs.require(db, job_id), request, idempotency_key or str(uuid4()))
+
+    @public.delete("/{job_id}/comments/{comment_id}", status_code=204)
+    def remove_comment(job_id: str, comment_id: str):
+        with jobs.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            jobs.require(db, job_id)
+            row = db.execute("SELECT submitted_job_id FROM review_comments WHERE id=? AND job_id=?", (comment_id, job_id)).fetchone()
+            if row is None:
+                raise HTTPException(404, "批注不存在。")
+            if row[0]:
+                raise HTTPException(409, "已提交的批注是修订依据，不能删除；请在新版本继续反馈。")
+            db.execute("DELETE FROM review_comments WHERE id=?", (comment_id,))
+        return Response(status_code=204)
+
+    @public.post("/{job_id}/feedback", response_model=GenerationJobDetail, status_code=202)
+    def submit_feedback(job_id: str, request: ReviewSubmission,
+                        idempotency_key: Annotated[str | None, Header(max_length=200)] = None):
+        if not settings.agent_enabled or not settings.worker_token:
+            raise HTTPException(503, "模型服务尚未配置；可以先保存批注。")
+        with jobs.connect() as db:
+            parent = jobs.require(db, job_id)
+            jobs.require_consistent_scope(parent)
+            skills = [SkillSnapshot(**value) for value in json.loads(parent["skills"])]
+        body = GenerationJobCreate(project_id=parent["project_id"], conversation_id=parent["conversation_id"],
+                                   module=parent["module"], goal=parent["goal"], target_units=parent["target_units"],
+                                   count_override=bool(parent["count_override"]), batch_size=parent["batch_size"], max_revision_rounds=parent["max_revision_rounds"])
+        return jobs.create(body, idempotency_key or str(uuid4()), skills, settings.llm_model, settings.review_model,
+                           sources=documents.sources(job_id), parent_id=job_id, review_request=request)
 
     @public.post("/{job_id}/continue", response_model=GenerationJobDetail)
     def continue_job(job_id: str, request: RunLimits):
@@ -134,7 +180,10 @@ def job_routers(settings: Settings, projects: ProjectRepository,
 
     @public.post("/{job_id}/{action}", response_model=GenerationJobDetail)
     def control_job(job_id: str, action: Literal["approve", "cancel", "retry"]) -> GenerationJobDetail:
-        return jobs.control(job_id, action)
+        detail = jobs.control(job_id, action)
+        if action == "approve" and detail.status == "completed":
+            queue_export(detail, jobs, projects, documents)
+        return detail
 
     @public.get("/{job_id}/download")
     def download(job_id: str) -> StreamingResponse:
@@ -172,6 +221,13 @@ def job_routers(settings: Settings, projects: ProjectRepository,
         if path.stat().st_size > 4 * 1024 * 1024:
             raise HTTPException(413, "图片超过模型读取上限。")
         return {"data": base64.b64encode(path.read_bytes()).decode(), "mime_type": "image/jpeg"}
+
+    @internal.get("/{job_id}/review-units", response_model=list[ArtifactUnit])
+    def review_units(job_id: str, kind: Literal["storyboard", "draft"], offset: int = Query(0, ge=0), limit: int = Query(5, ge=1, le=5)):
+        detail = jobs.detail(job_id)
+        if not detail.review_request:
+            raise HTTPException(404, "此任务没有上一版审阅素材。")
+        return jobs.units(detail.review_request.parent_id, kind, offset, limit)
 
     @internal.post("/{job_id}/heartbeat", status_code=204)
     def heartbeat(job_id: str, lease_id: Annotated[str, Header()]) -> Response:

@@ -4,6 +4,7 @@ import type { GenerationJobRecord } from "./job-contracts";
 export const jobStatuses: Record<string, string> = {
   queued: "排队中", running: "正在处理资料与生成内容", waiting_outline: "提纲已准备好，等待你确认",
   waiting_storyboard: "内容策划已准备好，等待你确认", needs_review: "内容有待确认项，请复核",
+  waiting_review: "修订稿已准备好，等待你确认",
   completed: "内容已生成", failed: "需要处理后继续", cancelled: "已停止",
 };
 
@@ -21,6 +22,7 @@ export function workflowState(job: GenerationJobRecord & { progress?: string | n
     : job.status === "queued" ? "已接收任务，正在等待处理"
     : job.status === "waiting_outline" ? "提纲已准备好，请在右侧查看后确认"
     : job.status === "waiting_storyboard" ? `${job.module === "concept" ? "逐页" : "逐章"}策划已准备好，请查看后确认生成`
+    : job.status === "waiting_review" ? "修订稿已准备好，请核对反馈后确认排版"
     : job.status === "completed" ? "内容生成与审校完成，文件排版和下载在右侧"
     : job.status === "needs_review" ? "已有审阅稿，请核对待确认项"
     : paused ? job.stage === "storyboarding" ? `章节提纲已完成；${planning}${job.status === "cancelled" ? "已停止" : "已暂停"}` : `${job.status === "cancelled" ? "已停止" : "暂时暂停"}，原需求和已有成果保留`
@@ -42,7 +44,7 @@ export function failureHelp(job: GenerationJobRecord) {
   return { kind: "other", message: "当前步骤未完成。可以从已保存的进度继续；若仍失败，请展开技术诊断查看原因。", retry: "继续当前步骤" };
 }
 
-export const isActiveJob = (job: GenerationJobRecord | null) => !!job && ["queued", "running", "waiting_outline", "waiting_storyboard"].includes(job.status);
+export const isActiveJob = (job: GenerationJobRecord | null) => !!job && ["queued", "running", "waiting_outline", "waiting_storyboard", "waiting_review"].includes(job.status);
 
 export function requirementBrief(messages: Message[], confirmed?: GenerationJobRecord | null): string {
   const additions = messages.filter(message => message.role === "user" && (!confirmed || Date.parse(message.created_at) > Date.parse(confirmed.created_at)));

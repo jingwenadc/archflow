@@ -126,7 +126,7 @@ class DraftPullRequestResult(BaseModel):
 
 
 JobModule = Literal["concept", "bid", "drawing"]
-JobStatus = Literal["queued", "running", "waiting_outline", "waiting_storyboard", "needs_review", "completed", "failed", "cancelled"]
+JobStatus = Literal["queued", "running", "waiting_outline", "waiting_storyboard", "waiting_review", "needs_review", "completed", "failed", "cancelled"]
 JobStage = Literal["planning", "storyboarding", "generating", "final_review"]
 
 CallLimit = Annotated[int, Field(strict=True, ge=1, le=100_000)]
@@ -206,6 +206,48 @@ class ArtifactUnit(BaseModel):
     table: list[list[str]] = Field(default_factory=list, max_length=15)
 
 
+ArtifactKind = Literal["outline", "storyboard", "draft"]
+
+
+class CommentAnchor(BaseModel):
+    unit_index: int = Field(ge=0, le=500, description="Outline: 0 is summary, 1-based section index otherwise. Storyboard/draft: actual unit index.")
+    quote: str = Field(min_length=1, max_length=4000)
+
+
+class ReviewCommentCreate(BaseModel):
+    kind: ArtifactKind
+    body: str = Field(min_length=1, max_length=4000)
+    anchor: CommentAnchor | None = None
+
+    @field_validator("body")
+    @classmethod
+    def nonblank_body(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("反馈不能为空。")
+        return value.strip()
+
+
+class ReviewComment(ReviewCommentCreate):
+    id: str
+    job_id: str
+    snapshot_hash: str | None = None
+    created_at: str
+    submitted_job_id: str | None = None
+
+
+class ReviewSubmission(BaseModel):
+    kind: ArtifactKind
+    overall: str = Field(default="", max_length=4000)
+    comment_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+class ReviewSnapshot(BaseModel):
+    parent_id: str
+    kind: ArtifactKind
+    comments: list[ReviewComment]
+    original_outline: DocumentPlan | None = None
+
+
 class UnitBatch(BaseModel):
     units: list[ArtifactUnit] = Field(min_length=1, max_length=10)
 
@@ -262,6 +304,8 @@ class GenerationJobRecord(BaseModel):
     target_units: int
     count_override: bool = False
     scope_mismatch: bool = False
+    parent_id: str | None = None
+    feedback_kind: ArtifactKind | None = None
     batch_size: int
     max_revision_rounds: int
     status: JobStatus
@@ -281,10 +325,12 @@ class GenerationJobRecord(BaseModel):
 
 
 class GenerationJobDetail(GenerationJobRecord):
+    storyboard_range: list[int] | None = None
     outline: DocumentPlan | None = None
     batches: list[GenerationBatchRecord]
     final_review: ReviewResult | None = None
     progress: str | None = None
+    review_request: ReviewSnapshot | None = None
 
 
 class GenerationJobEvent(BaseModel):

@@ -256,5 +256,8 @@ def test_revision_uses_the_newly_confirmed_budget(tmp_path):
     assert response.status_code == 202
     assert response.json()["max_total_tokens"] == 200000
     assert response.json()["max_model_calls"] == 100
+    assert response.json()["goal"] == old.goal
+    assert response.json()["review_request"]["comments"][0]["body"] == "修改配色"
+    assert response.json()["parent_id"] == old.id
     assert repo.detail(old.id).max_total_tokens == 500000
     assert client.post(f"/api/v1/jobs/{old.id}/revise", json=body | {"max_total_tokens": True}).status_code == 422
