@@ -1,94 +1,103 @@
 {
-  "项目": "示例：城市公共文化中心",
+  "项目": "虚构示例：便携灯具体验提案",
+  "说明": "仅演示内容合同，不是实际项目事实，也不是已批准内容；素材编号是示例。",
   "画布": "screen169",
   "slides": [
     {
       "id": "S01",
-      "chapter": "开篇",
-      "title": "城市公共文化中心",
-      "purpose": "建立项目身份",
-      "takeaway": "本次汇报聚焦概念方案与关键空间",
+      "chapter": "设计方向",
+      "title": "让光跟着生活走",
+      "purpose": "建立便携灯具的设计主张",
+      "takeaway": "用可移动光源回应不同使用场景",
+      "copy": "便携灯具概念提案",
       "archetype": "minimal-cover",
       "density": "pause",
-      "evidence": ["任务书中的项目名称"],
-      "assets": ["logo-client", "render-hero-01"]
+      "fact_status": "proposal",
+      "evidence": [
+        "本示例的设计命题，非已上市产品"
+      ],
+      "assets": [],
+      "visual_plan": "以文字主张为焦点，配基于后续确认造型制作的单一灯具概念剪影；不在内容确认前出图。"
     },
     {
       "id": "S02",
-      "chapter": "项目解读",
-      "title": "区位与公共交通",
-      "purpose": "说明项目与城市公共网络的关系",
-      "takeaway": "场地连接两条主要公共路径",
-      "archetype": "context-map-split",
+      "chapter": "设计方向",
+      "title": "同一盏灯，三种场景",
+      "purpose": "解释推荐的使用情境",
+      "takeaway": "工作、阅读与短暂停留共享一个灯具概念",
+      "copy": "随手移到需要光的地方。",
+      "archetype": "scenario-demo",
       "density": "explain",
-      "evidence": ["场地区位图", "任务书中的出入口条件"],
-      "assets": ["map-city-01", "map-site-01"]
+      "fact_status": "proposal",
+      "evidence": [
+        "设计团队提出的情境，未进行用户研究"
+      ],
+      "assets": [],
+      "visual_plan": "三幅同风格分镜以桌面阅读为主场景；先用矢量场景示意，造型确认后可生成概念演示图；不暗示已验证户外防水能力。"
     },
     {
       "id": "S03",
-      "chapter": "项目解读",
-      "title": "开放与安静的冲突",
-      "purpose": "明确公共性与专业空间的核心矛盾",
-      "takeaway": "不同开放等级需要清晰分层",
-      "archetype": "narrative-hinge",
-      "density": "pause",
-      "evidence": ["任务书的开放时间与声学要求"],
-      "assets": []
+      "chapter": "设计方向",
+      "title": "从提握动作推导轮廓",
+      "purpose": "说明形态选择的设计原因",
+      "takeaway": "手部动作与灯体轮廓相互配合",
+      "copy": "让提握成为形态的一部分。",
+      "archetype": "generation-sequence",
+      "density": "explain",
+      "fact_status": "proposal",
+      "evidence": [
+        "拟议的提握动作与形态推导，不是人体工学测试结论"
+      ],
+      "assets": [],
+      "visual_plan": "三个同视角矢量草图：动作关系、提握空间、轮廓建议；高亮每步变化，轮廓尚待细化，不添加尺寸。"
     },
     {
       "id": "S04",
-      "chapter": "设计构思",
-      "title": "功能分层",
-      "purpose": "回应开放等级冲突",
-      "takeaway": "首层公共共享，上层形成可控专业空间",
-      "archetype": "stacked-axon-program",
+      "chapter": "使用体验",
+      "title": "一个动作，切换氛围",
+      "purpose": "演示拟议交互",
+      "takeaway": "交互方案追求简单直接",
+      "copy": "旋转调节亮度，让反馈跟随动作。",
+      "archetype": "journey-flow",
       "density": "explain",
-      "evidence": ["功能表", "概念平面"],
-      "assets": ["axon-program-01"]
+      "fact_status": "proposal",
+      "evidence": [
+        "拟议功能，工程可行性待验证"
+      ],
+      "assets": [],
+      "visual_plan": "用手势、旋转箭头与两种亮度的定性示意建立交互序列；后叠可编辑标签，画面标注交互概念，不编造流明或续航。"
     },
     {
       "id": "S05",
-      "chapter": "设计构思",
-      "title": "体量生成",
-      "purpose": "解释形体如何回应场地与入口",
-      "takeaway": "公共轴线切分体量并形成共享中庭",
-      "archetype": "generation-sequence",
+      "chapter": "使用体验",
+      "title": "把温暖留在细节里",
+      "purpose": "展示材质与触感方向",
+      "takeaway": "柔和表面与清晰交互形成统一设计语言",
+      "copy": "温润表面，明确触点。",
+      "archetype": "moodboard",
       "density": "explain",
-      "evidence": ["体量模型四阶段"],
-      "assets": ["massing-01", "massing-02", "massing-03", "massing-04"]
+      "fact_status": "proposal",
+      "evidence": [
+        "材质与色彩为拟议方向，未选择供应商"
+      ],
+      "assets": [],
+      "visual_plan": "一张材质概念主图配表面纹理局部与中性色样；可用图像生成材质意向，中文标签用原生对象，避免暗示真实材料认证。"
     },
     {
       "id": "S06",
-      "chapter": "方案呈现",
-      "title": "首层平面",
-      "purpose": "证明公共路径与主要功能组织",
-      "takeaway": "入口、中庭与展厅形成连续公共界面",
-      "archetype": "plan-section-plate",
-      "density": "inspect",
-      "evidence": ["首层概念平面"],
-      "assets": ["plan-l1"]
-    },
-    {
-      "id": "S07",
-      "chapter": "方案呈现",
-      "title": "中庭体验",
-      "purpose": "说明核心空间的尺度与光线意图",
-      "takeaway": "顶部采光加强中庭的公共识别度",
-      "archetype": "plan-plus-rendering",
-      "density": "inspect",
-      "evidence": ["首层概念平面", "中庭效果图"],
-      "assets": ["plan-l1", "render-atrium-01"]
-    },
-    {
-      "id": "S08",
-      "chapter": "结束",
-      "title": "下一步工作",
-      "purpose": "明确需要甲方确认的事项",
-      "takeaway": "确认功能分层后进入深化设计",
-      "archetype": "closing",
+      "chapter": "使用体验",
+      "title": "下一步，用原型验证",
+      "purpose": "提出本次希望达成的决定",
+      "takeaway": "确认体验方向后进入造型与交互验证",
+      "copy": "确认方向，再验证提握、调光与光感。",
+      "archetype": "value-close",
       "density": "pause",
-      "evidence": ["当前会议议题"],
-      "assets": []
+      "fact_status": "proposal",
+      "evidence": [
+        "建议的下一阶段工作"
+      ],
+      "assets": [],
+      "visual_plan": "三个简洁原型验证示意共用一条视觉基线，保留大面积留白；不用未经同意的工期或成本数字。"
     }
   ]
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""校验建筑概念方案的 JSON 故事板。"""
+"""校验方案设计 PPT 的内容与视觉计划结构；不评判美感或验证来源真假。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,10 @@ from collections import Counter
 from pathlib import Path
 
 
-REQUIRED = {"id", "chapter", "title", "purpose", "takeaway", "archetype", "evidence", "assets"}
+REQUIRED = {
+    "id", "chapter", "title", "purpose", "takeaway", "archetype", "evidence", "assets",
+    "copy", "visual_plan", "fact_status",
+}
 ALLOWED_ARCHETYPES = {
     "minimal-cover", "contents-matrix", "chapter-divider", "narrative-hinge",
     "context-map-split", "brief-program-map", "concept-equation",
@@ -18,6 +21,9 @@ ALLOWED_ARCHETYPES = {
     "stacked-axon-program", "plan-section-plate", "plan-plus-locator",
     "plan-plus-rendering", "rendering-hero", "image-evidence-collage",
     "dark-concept-field", "scheme-comparison", "technical-table", "closing",
+    "problem-opportunity", "system-diagram", "solution-overview", "exploded-view",
+    "detail-spotlight", "journey-flow", "scenario-demo", "moodboard", "value-close",
+    "data-chart", "custom",
 }
 
 
@@ -60,15 +66,25 @@ def main() -> int:
             ids.append(str(slide_id))
         else:
             errors.append(f"{label}：id 必须是非空文字")
-        for field in ("chapter", "title", "purpose", "takeaway"):
+        for field in ("chapter", "title", "purpose", "takeaway", "visual_plan"):
             if field in slide and not has_text(slide[field]):
                 errors.append(f"{label}：{field} 必须是非空文字")
         archetype = slide.get("archetype")
-        if archetype not in ALLOWED_ARCHETYPES:
+        if not isinstance(archetype, str) or archetype not in ALLOWED_ARCHETYPES:
             errors.append(f"{label}：不支持的页面原型 {archetype!r}")
         evidence = slide.get("evidence")
-        if evidence is not None and not isinstance(evidence, list):
-            errors.append(f"{label}：evidence 必须是数组")
+        if not isinstance(evidence, list) or not all(has_text(item) for item in evidence):
+            errors.append(f"{label}：evidence 必须是非空文字条目的数组（纯提案可为空数组）")
+        status = slide.get("fact_status")
+        if not isinstance(status, str) or status not in {"fact", "proposal", "assumption", "mixed"}:
+            errors.append(f"{label}：fact_status 必须为 fact、proposal、assumption 或 mixed")
+        if (status in ("fact", "mixed") or archetype == "data-chart") and not evidence:
+            errors.append(f"{label}：事实、混合内容或数据图表必须提供来源")
+        copy = slide.get("copy")
+        if not isinstance(copy, str):
+            errors.append(f"{label}：copy 必须是实际上屏文案字符串，可以为空")
+        elif len(copy) > 90:
+            warnings.append(f"{label}：正文超过 90 字符，考虑精简、拆页或移入备注")
         assets = slide.get("assets")
         if not isinstance(assets, list):
             errors.append(f"{label}：assets 必须是数组")

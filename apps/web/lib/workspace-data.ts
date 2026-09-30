@@ -57,12 +57,12 @@ export const modules: WorkspaceModule[] = [
 export const skills = [
   {
     slug: "architectural-concept-presentation",
-    name: "建筑概念方案演示",
+    name: "方案设计 PPT",
     category: "方案设计",
-    description: "将任务书、图纸、效果图和参考资料组织为可审阅、可编辑的建筑概念方案演示。",
-    inputs: ["任务书", "基础图纸", "效果图与参考资料"],
+    description: "先用文字对齐议程和逐页内容，再创作以图为主、文案精炼、有说服力的方案提案。",
+    inputs: ["项目资料与设计想法", "现有原型与素材", "视觉参考"],
     output: "PPTX / PDF / 逐页故事板",
-    stages: ["整体框架审批", "逐页故事板审批", "按授权范围生成", "版本选择与整合"],
+    stages: ["纯文字议程确认", "纯文字逐页内容确认", "图解创作与页面设计", "版本选择与整合"],
   },
   {
     slug: "aec-technical-bid-authoring",

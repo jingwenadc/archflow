@@ -18,7 +18,7 @@ PRODUCT_DESIGN.md
 
 现有技能：
 
-- `architectural-concept-presentation`：建筑概念方案演示
+- `architectural-concept-presentation`：方案设计 PPT（通用设计提案，保留原标识兼容已有项目）
 - `aec-technical-bid-authoring`：建筑工程技术标编制
 
 技术标技能保留了可独立运行的辅助脚本：

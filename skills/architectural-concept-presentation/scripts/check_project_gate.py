@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""在生成章节或完整合并版前校验人工批准状态。"""
+"""辅助核对当前交付范围的批准状态；不能替代宿主对人工批准的验证。"""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def approved(block: object) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("state", type=Path, help="项目的 review/project-state.json")
+    parser.add_argument("state", type=Path, help="方案工作区/00_项目总控/project-state.json")
     parser.add_argument("--action", choices=("generate-section", "finalize"), required=True)
     parser.add_argument("--section", help="生成章节时使用的章节编号")
     args = parser.parse_args()
@@ -30,14 +30,23 @@ def main() -> int:
     except (OSError, json.JSONDecodeError) as exc:
         return fail(f"无法读取有效项目状态：{exc}")
 
+    if not isinstance(data, dict):
+        return fail("项目状态必须是 JSON 对象")
     if not approved(data.get("structure")):
-        return fail("整体骨架尚未得到用户明确批准")
+        return fail("整体议程尚未得到用户明确批准")
     if not approved(data.get("storyboard")):
-        return fail("完整逐页故事板尚未得到用户明确批准")
+        return fail("本次交付范围的逐页内容尚未得到用户明确批准")
 
     sections = data.get("sections")
     if not isinstance(sections, list) or not sections:
-        return fail("项目状态中没有有效的一级章节")
+        return fail("项目状态中没有有效的工作范围")
+    if not all(isinstance(section, dict) for section in sections):
+        return fail("每个工作范围必须是对象")
+    ids = [section.get("id") for section in sections]
+    if any(not isinstance(item, str) or not item.strip() for item in ids):
+        return fail("每个范围必须有非空文字编号")
+    if len(set(ids)) != len(ids):
+        return fail("范围编号重复，无法确定授权对象")
 
     if args.action == "finalize":
         waiting = [
