@@ -28,6 +28,7 @@ import {
   FileIcon,
   PlusIcon,
   SendIcon,
+  TrashIcon,
   UploadIcon,
 } from "./icons";
 
@@ -462,7 +463,6 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
 
               <div className="resource-section-heading">
                 <span>当前项目 · 对话共享</span>
-                <button className="trash-open-button" type="button" disabled={!projectId} title="查看已删除对话和生成成果" onClick={() => void openTrash()}>回收站</button>
               </div>
               <div className="file-list">
                 {files.map((file) => (
@@ -493,32 +493,35 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
             <button type="button" onClick={() => setRightCollapsed(false)}>成果<ChevronRight /></button>
           </div>
 
-          <div className="conversation-tabs" role="tablist" aria-label={`${module.label}对话`}>
-            {conversations.map((conversation) => (
-              <div key={conversation.id} className={activeConversationId === conversation.id ? "conversation-tab is-active" : "conversation-tab"}>
-                <button
-                  className="conversation-tab-select"
-                  type="button"
-                  role="tab"
-                  title={conversation.title}
-                  aria-selected={activeConversationId === conversation.id}
-                  onClick={() => setActiveConversationId(conversation.id)}
-                >
-                  <span>{conversation.title}</span>
-                </button>
-                <button
-                  className="conversation-tab-close"
-                  type="button"
-                  aria-label={`删除对话：${conversation.title}`}
-                  title="删除对话"
-                  disabled={deletingConversation || sendingMessage}
-                  onClick={() => { setDeleteError(null); setDeleteTarget(conversation); }}
-                ><CloseIcon /></button>
-              </div>
-            ))}
-            <button className="new-conversation" type="button" disabled={!projectId || creatingConversation} onClick={() => void addConversation()}>
-              <PlusIcon /><span>{creatingConversation ? "创建中…" : "新建对话"}</span>
-            </button>
+          <div className="conversation-tab-bar">
+            <div className="conversation-tabs" role="tablist" aria-label={`${module.label}对话`}>
+              {conversations.map((conversation) => (
+                <div key={conversation.id} className={activeConversationId === conversation.id ? "conversation-tab is-active" : "conversation-tab"}>
+                  <button
+                    className="conversation-tab-select"
+                    type="button"
+                    role="tab"
+                    title={conversation.title}
+                    aria-selected={activeConversationId === conversation.id}
+                    onClick={() => setActiveConversationId(conversation.id)}
+                  >
+                    <span>{conversation.title}</span>
+                  </button>
+                  <button
+                    className="conversation-tab-close"
+                    type="button"
+                    aria-label={`删除对话：${conversation.title}`}
+                    title="删除对话"
+                    disabled={deletingConversation || sendingMessage}
+                    onClick={() => { setDeleteError(null); setDeleteTarget(conversation); }}
+                  ><CloseIcon /></button>
+                </div>
+              ))}
+              <button className="new-conversation" type="button" disabled={!projectId || creatingConversation} onClick={() => void addConversation()}>
+                <PlusIcon /><span>{creatingConversation ? "创建中…" : "新建对话"}</span>
+              </button>
+            </div>
+            <button className="conversation-trash-button" type="button" disabled={!projectId} aria-label="打开项目回收站" title="项目回收站：查看已删除对话和生成成果" onClick={() => void openTrash()}><TrashIcon /></button>
           </div>
 
           <dialog

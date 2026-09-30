@@ -38,6 +38,15 @@ export function CloseIcon(props: IconProps) {
   return <Icon {...props}><path d="m6 6 12 12M18 6 6 18" /></Icon>;
 }
 
+export function TrashIcon(props: IconProps) {
+  return <Icon strokeWidth="2" {...props}>
+    <path d="M8 5V3.8C8 2.8 8.8 2 9.8 2h4.4c1 0 1.8.8 1.8 1.8V5" />
+    <path d="M3.5 5h17a1 1 0 0 1 1 1v2h-19V6a1 1 0 0 1 1-1Z" />
+    <path d="m5 8 .7 12.2A2 2 0 0 0 7.7 22h8.6a2 2 0 0 0 2-1.8L19 8" />
+    <path d="M9 11v7m3-7v7m3-7v7" />
+  </Icon>;
+}
+
 export function SendIcon(props: IconProps) {
   return <Icon {...props}><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></Icon>;
 }
