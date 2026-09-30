@@ -5,13 +5,16 @@ import {
   createConversation,
   deleteConversation,
   getConversations,
+  getProjectTrash,
   getMessages,
   getProjectFiles,
   getProjects,
   sendMessage,
+  restoreConversation,
   uploadProjectFile,
   apiRequest,
   type Conversation,
+  type TrashedConversation,
   type Message,
   type UploadedFile,
 } from "@/lib/api";
@@ -40,6 +43,7 @@ type FileItem = {
 };
 
 const allowedExtensions = new Set(["jpg", "jpeg", "png", "webp", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx"]);
+const moduleNames = { concept: "方案设计", bid: "投标文件", drawing: "施工图协同" };
 
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -84,10 +88,16 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
   const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
   const [deletingConversation, setDeletingConversation] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashItems, setTrashItems] = useState<TrashedConversation[]>([]);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [trashError, setTrashError] = useState<string | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const deleteDialog = useRef<HTMLDialogElement>(null);
+  const trashDialog = useRef<HTMLDialogElement>(null);
   const scopeKey = `${projectId}:${module.key}:${activeConversationId}`;
   const currentScope = useRef(scopeKey);
   currentScope.current = scopeKey;
@@ -109,6 +119,15 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
   }, [deleteTarget]);
 
   useEffect(() => { setDeleteTarget(null); setDeleteError(null); }, [projectId, module.key]);
+
+  useEffect(() => {
+    const dialog = trashDialog.current;
+    if (!dialog) return;
+    if (trashOpen && !dialog.open) dialog.showModal();
+    else if (!trashOpen && dialog.open) dialog.close();
+  }, [trashOpen]);
+
+  useEffect(() => { setTrashOpen(false); setTrashItems([]); setTrashError(null); }, [projectId]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("archflow-workspace");
@@ -320,11 +339,49 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
       setActiveConversationId(current => current === target.id ? remaining[Math.min(index, remaining.length - 1)]?.id ?? null : current);
       if (activeConversationId === target.id) { setDraft(""); pendingMessage.current = null; }
       setDeleteTarget(null);
-      announce("对话已删除，项目资料已保留");
+      announce("对话已移到项目回收站，资料和成果已保留");
     } catch (cause) {
       if (currentScope.current.startsWith(projectScope)) setDeleteError(cause instanceof Error ? cause.message : "删除失败，请重试。");
     } finally {
       setDeletingConversation(false);
+    }
+  }
+
+  async function openTrash() {
+    if (!projectId) return;
+    const requestedProject = projectId;
+    setTrashOpen(true);
+    setTrashLoading(true);
+    setTrashError(null);
+    try {
+      const items = await getProjectTrash(requestedProject);
+      if (currentScope.current.split(":")[0] === requestedProject) setTrashItems(items);
+    } catch (cause) {
+      if (currentScope.current.split(":")[0] === requestedProject) setTrashError(cause instanceof Error ? cause.message : "无法读取回收站。");
+    } finally {
+      if (currentScope.current.split(":")[0] === requestedProject) setTrashLoading(false);
+    }
+  }
+
+  async function restoreFromTrash(item: TrashedConversation) {
+    if (!projectId || restoringId) return;
+    const requestedProject = projectId;
+    setRestoringId(item.id);
+    setTrashError(null);
+    try {
+      const restored = await restoreConversation(item.id, requestedProject);
+      if (currentScope.current.split(":")[0] !== requestedProject) return;
+      setTrashItems(items => items.filter(entry => entry.id !== item.id));
+      if (restored.module === module.key) {
+        setConversations(items => [restored, ...items]);
+        setActiveConversationId(restored.id);
+        setTrashOpen(false);
+      }
+      announce(`已恢复到${moduleNames[restored.module]}；已取消的任务不会自动重启`);
+    } catch (cause) {
+      if (currentScope.current.split(":")[0] === requestedProject) setTrashError(cause instanceof Error ? cause.message : "恢复失败，请重试。");
+    } finally {
+      setRestoringId(null);
     }
   }
 
@@ -405,6 +462,7 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
 
               <div className="resource-section-heading">
                 <span>当前项目 · 对话共享</span>
+                <button className="trash-open-button" type="button" disabled={!projectId} title="查看已删除对话和生成成果" onClick={() => void openTrash()}>回收站</button>
               </div>
               <div className="file-list">
                 {files.map((file) => (
@@ -473,12 +531,18 @@ export function WorkspaceShell({ module }: { module: WorkspaceModule }) {
           >
             <h2 id="delete-conversation-title">删除这个对话？</h2>
             <p className="delete-conversation-name">{deleteTarget?.title}</p>
-            <p id="delete-conversation-description">此对话将从标签栏移除，未完成的生成任务会取消。聊天与历史成果保留在后台，项目资料不受影响。已发送的模型请求可能仍会计费。</p>
+            <p id="delete-conversation-description">此对话将移到项目回收站，未完成的生成任务会取消。聊天与已生成成果可恢复，项目资料不受影响。已发送的模型请求可能仍会计费。</p>
             {deleteError && <p className="generation-error" role="alert">{deleteError}</p>}
             <div className="delete-conversation-actions">
               <button type="button" data-cancel-delete disabled={deletingConversation} onClick={() => setDeleteTarget(null)}>取消</button>
               <button type="button" className="delete-confirm" disabled={deletingConversation} onClick={() => void removeConversation()}>{deletingConversation ? "正在删除…" : "删除对话"}</button>
             </div>
+          </dialog>
+
+          <dialog className="delete-conversation-dialog trash-dialog" ref={trashDialog} aria-labelledby="project-trash-title" onClose={() => setTrashOpen(false)}>
+            <div className="trash-heading"><div><h2 id="project-trash-title">项目回收站</h2><p>已删除对话和生成版本保存在服务器。恢复后，已取消的任务不会自动继续。</p></div><button type="button" aria-label="关闭回收站" onClick={() => setTrashOpen(false)}><CloseIcon /></button></div>
+            {trashLoading ? <p role="status">正在读取回收站…</p> : trashItems.length === 0 && !trashError ? <p>回收站为空。</p> : <div className="trash-list">{trashItems.map(item => <div className="trash-item" key={item.id}><div><strong>{item.title}</strong><small>{moduleNames[item.module]} · {item.generation_count} 个生成版本 · {new Date(item.deleted_at).toLocaleString("zh-CN")}</small></div><button type="button" disabled={!!restoringId} onClick={() => void restoreFromTrash(item)}>{restoringId === item.id ? "恢复中…" : "恢复"}</button></div>)}</div>}
+            {trashError && <p className="generation-error" role="alert">{trashError}</p>}
           </dialog>
 
           <div className="conversation-heading">

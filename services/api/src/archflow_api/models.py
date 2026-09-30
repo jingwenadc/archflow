@@ -67,6 +67,11 @@ class ConversationRecord(BaseModel):
     updated_at: str
 
 
+class TrashedConversation(ConversationRecord):
+    deleted_at: str
+    generation_count: int
+
+
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=20_000)
     client_id: str | None = Field(default=None, max_length=100)

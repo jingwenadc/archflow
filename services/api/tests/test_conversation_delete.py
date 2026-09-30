@@ -66,6 +66,49 @@ def test_delete_cancels_all_unfinished_jobs_and_fences_worker(tmp_path):
     assert client.post("/api/v1/jobs", json=request.model_dump()).status_code == 404
 
 
+def test_project_trash_restores_messages_and_generated_versions_without_restart(tmp_path):
+    client = make_client(tmp_path)
+    project = client.post("/api/v1/projects", json={"name": "项目回收站"}).json()
+    other = client.post("/api/v1/projects", json={"name": "其他项目"}).json()
+    chats = [client.post("/api/v1/conversations", json={
+        "project_id": project["id"], "module": module, "title": title,
+    }).json() for module, title in [("concept", "方案初稿"), ("bid", "投标初稿")]]
+    concept = chats[0]
+    client.post(f"/api/v1/conversations/{concept['id']}/messages", json={"content": "保留我的要求"})
+    repo = JobRepository(tmp_path / "archflow.sqlite3")
+    request = GenerationJobCreate(project_id=project["id"], conversation_id=concept["id"], module="concept", goal="测试", target_units=1)
+    job = repo.create(request, str(uuid4()), SKILLS, "m", "r")
+    with repo.connect() as database:
+        database.execute("UPDATE generation_jobs SET status='completed' WHERE id=?", (job.id,))
+    for chat in chats:
+        assert client.delete(f"/api/v1/conversations/{chat['id']}", params={"project_id": project["id"]}).status_code == 204
+    assert client.get(f"/api/v1/projects/{other['id']}/trash").json() == []
+    trash = client.get(f"/api/v1/projects/{project['id']}/trash").json()
+    assert {entry["module"] for entry in trash} == {"concept", "bid"}
+    assert next(entry for entry in trash if entry["id"] == concept["id"])["generation_count"] == 1
+    assert repo.detail(job.id).status == "completed"
+
+    restore = f"/api/v1/projects/{project['id']}/trash/conversations/{concept['id']}/restore"
+    assert client.post(restore.replace(project["id"], other["id"])).status_code == 404
+    assert client.post(restore).status_code == 200
+    assert client.post(restore).status_code == 404
+    assert len(client.get(f"/api/v1/conversations/{concept['id']}/messages").json()) == 2
+    assert client.get("/api/v1/conversations", params={"project_id": project["id"], "module": "concept"}).json()[0]["id"] == concept["id"]
+    assert repo.detail(job.id).status == "completed"
+    assert [entry["id"] for entry in client.get(f"/api/v1/projects/{project['id']}/trash").json()] == [chats[1]["id"]]
+
+
+def test_restoring_deleted_running_chat_does_not_restart_cancelled_job(tmp_path):
+    client = make_client(tmp_path)
+    project = client.post("/api/v1/projects", json={"name": "恢复测试"}).json()
+    chat = client.post("/api/v1/conversations", json={"project_id": project["id"], "module": "concept", "title": "进行中"}).json()
+    repo = JobRepository(tmp_path / "archflow.sqlite3")
+    job = repo.create(GenerationJobCreate(project_id=project["id"], conversation_id=chat["id"], module="concept", goal="测试", target_units=1), str(uuid4()), SKILLS, "m", "r")
+    assert client.delete(f"/api/v1/conversations/{chat['id']}", params={"project_id": project["id"]}).status_code == 204
+    assert client.post(f"/api/v1/projects/{project['id']}/trash/conversations/{chat['id']}/restore").status_code == 200
+    assert repo.detail(job.id).status == "cancelled"
+
+
 def test_v1_database_migrates_without_losing_conversations(tmp_path):
     path = tmp_path / "legacy.sqlite3"
     with sqlite3.connect(path) as database:

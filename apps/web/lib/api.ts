@@ -26,6 +26,11 @@ export type Conversation = {
   updated_at: string;
 };
 
+export type TrashedConversation = Conversation & {
+  deleted_at: string;
+  generation_count: number;
+};
+
 export type Message = {
   id: string;
   conversation_id: string;
@@ -129,6 +134,14 @@ export function createConversation(projectId: string, module: Conversation["modu
 
 export function deleteConversation(conversationId: string, projectId: string) {
   return apiRequest<void>(`/api/v1/conversations/${encodeURIComponent(conversationId)}?project_id=${encodeURIComponent(projectId)}`, { method: "DELETE" });
+}
+
+export function getProjectTrash(projectId: string) {
+  return apiRequest<TrashedConversation[]>(`/api/v1/projects/${encodeURIComponent(projectId)}/trash`);
+}
+
+export function restoreConversation(conversationId: string, projectId: string) {
+  return apiRequest<Conversation>(`/api/v1/projects/${encodeURIComponent(projectId)}/trash/conversations/${encodeURIComponent(conversationId)}/restore`, { method: "POST" });
 }
 
 export function getMessages(conversationId: string) {

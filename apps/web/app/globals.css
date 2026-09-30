@@ -218,6 +218,8 @@ a { color: inherit; text-decoration: none; }
 .resource-section-heading { margin: 22px 4px 7px; display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 12px; font-weight: 700; }
 .resource-section-heading button { width: 27px; height: 27px; display: grid; place-items: center; padding: 0; border: 0; background: transparent; cursor: pointer; }
 .resource-section-heading svg { width: 18px; }
+.resource-section-heading .trash-open-button { width: auto; height: auto; padding: 4px 6px; color: var(--navy); font: inherit; font-weight: 600; white-space: nowrap; }
+.resource-section-heading .trash-open-button:disabled { opacity: .5; cursor: not-allowed; }
 .file-list { display: flex; flex-direction: column; gap: 3px; }
 .file-row { width: 100%; min-width: 0; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; cursor: pointer; text-align: left; }
 .file-row:hover { border-color: #e5e9ed; background: #f7f9fa; }
@@ -253,6 +255,17 @@ a { color: inherit; text-decoration: none; }
 .delete-conversation-actions button { padding: 9px 16px; border: 1px solid var(--line-strong); border-radius: 6px; background: white; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
 .delete-conversation-actions .delete-confirm { background: #a13f37; border-color: #a13f37; color: white; }
 .delete-conversation-actions button:disabled { opacity: .5; cursor: wait; }
+.trash-dialog { width: min(560px, calc(100vw - 32px)); max-height: min(70vh, 700px); }
+.trash-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.trash-heading > button { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 6px; background: white; cursor: pointer; }
+.trash-heading svg { width: 15px; }
+.trash-list { display: flex; flex-direction: column; max-height: 48vh; overflow-y: auto; margin-top: 16px; }
+.trash-item { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); }
+.trash-item > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.trash-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.trash-item small { color: var(--muted); font-size: 11px; }
+.trash-item button { flex: none; padding: 7px 11px; border: 1px solid var(--line-strong); border-radius: 6px; background: white; color: var(--navy); cursor: pointer; }
+.trash-item button:disabled { opacity: .5; cursor: wait; }
 .conversation-tab i { padding: 2px 4px; border-radius: 2px; background: var(--navy-soft); color: var(--navy); font-size: 9px; font-style: normal; }
 .new-conversation { border-radius: 4px; }
 .new-conversation svg { width: 16px; }

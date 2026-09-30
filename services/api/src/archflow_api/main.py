@@ -13,6 +13,7 @@ from .models import (
     CapabilitySet,
     ConversationCreate,
     ConversationRecord,
+    TrashedConversation,
     DraftPullRequestRequest,
     DraftPullRequestResult,
     FileRecord,
@@ -130,6 +131,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def create_conversation(request: ConversationCreate) -> ConversationRecord:
         projects.get(request.project_id)
         return conversations.create(request)
+
+    @app.get("/api/v1/projects/{project_id}/trash", response_model=list[TrashedConversation])
+    def project_trash(project_id: str) -> list[TrashedConversation]:
+        projects.get(project_id)
+        return conversations.list_deleted(project_id)
+
+    @app.post("/api/v1/projects/{project_id}/trash/conversations/{conversation_id}/restore", response_model=ConversationRecord)
+    def restore_conversation(project_id: str, conversation_id: str) -> ConversationRecord:
+        projects.get(project_id)
+        return conversations.restore(conversation_id, project_id)
 
     @app.delete("/api/v1/conversations/{conversation_id}", status_code=204)
     def delete_conversation(conversation_id: str, project_id: str) -> Response:

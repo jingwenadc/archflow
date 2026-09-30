@@ -6,7 +6,7 @@ from uuid import uuid4, uuid5, NAMESPACE_URL
 
 from fastapi import HTTPException, status
 
-from .models import ConversationCreate, ConversationRecord, MessageCreate, MessageRecord
+from .models import ConversationCreate, ConversationRecord, MessageCreate, MessageRecord, TrashedConversation
 
 SCHEMA_VERSION = 2
 
@@ -70,6 +70,30 @@ class ConversationRepository:
                 (project_id, module),
             ).fetchall()
         return [ConversationRecord(**dict(row)) for row in rows]
+
+    def list_deleted(self, project_id: str) -> list[TrashedConversation]:
+        """A project-wide view of recoverable chats and their generation history."""
+        with self._connect() as connection:
+            has_jobs = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='generation_jobs'").fetchone()
+            count = "(SELECT COUNT(*) FROM generation_jobs j WHERE j.conversation_id=c.id)" if has_jobs else "0"
+            rows = connection.execute(
+                f"SELECT c.*, {count} AS generation_count FROM conversations c "
+                "WHERE c.project_id=? AND c.deleted_at IS NOT NULL ORDER BY c.deleted_at DESC, c.id DESC",
+                (project_id,),
+            ).fetchall()
+        return [TrashedConversation(**dict(row)) for row in rows]
+
+    def restore(self, conversation_id: str, project_id: str) -> ConversationRecord:
+        """Restore the chat and saved outputs; cancelled work stays cancelled."""
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM conversations WHERE id=? AND project_id=?", (conversation_id, project_id)
+            ).fetchone()
+            if row is None or row["deleted_at"] is None:
+                raise HTTPException(404, "Conversation not found in this project's trash.")
+            connection.execute("UPDATE conversations SET deleted_at=NULL WHERE id=?", (conversation_id,))
+        return ConversationRecord(**dict(row))
 
     def create(self, request: ConversationCreate) -> ConversationRecord:
         now = datetime.now(UTC).isoformat()
