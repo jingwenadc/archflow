@@ -102,6 +102,11 @@ async function provider(pressure = false) {
       const submit = payload.tools.find((item: { name: string }) => item.name === "submit") as { parameters: { properties: { units: { items: { required: string[] } } } } };
       assert.ok(submit.parameters.properties.units.items.required.includes("slide"));
     }
+    if (prompt.module === "concept" && prompt.task === "storyboard") {
+      const submit = payload.tools.find((item: { name: string }) => item.name === "submit") as { parameters: { properties: { units: { items: { required: string[] } } } } };
+      assert.ok(submit.parameters.properties.units.items.required.includes("slide_copy"));
+      assert.ok(submit.parameters.properties.units.items.required.includes("visual_plan"));
+    }
     const hasRead = input.some(item => item.type === "function_call" && item.name === "read");
     const hasPreview = input.some(item => item.type === "function_call" && item.name === "preview_slides");
     let name = "read"; let args: unknown = { path: "/skills/test-skill/SKILL.md" };
@@ -111,7 +116,7 @@ async function provider(pressure = false) {
       else if (["review", "final_review"].includes(prompt.task)) {
         const failed = prompt.task === "review" && prompt.existing_units[0].body === "first draft";
         args = name === "preview_slides" ? {} : { passed: !failed, summary: failed ? "Revise content" : "Consistent", issues: failed ? ["Needs revision"] : [] };
-      } else args = { units: Array.from({ length: prompt.unit_range[1] - prompt.unit_range[0] + 1 }, (_, index) => ({ unit_index: prompt.unit_range[0] + index, title: `Unit ${prompt.unit_range[0] + index}`, body: prompt.task === "storyboard" ? "content plan" : prompt.task === "draft" && !prompt.previous_review ? "first draft" : "revised draft", evidence: ["user-brief"], missing_facts: [], ...(prompt.module === "concept" && prompt.task === "draft" ? { slide: { background: "FFFFFF", elements: [{ kind: "text", x: 1, y: 1, w: 10, h: 2, text: `Unit ${prompt.unit_range[0] + index}`, font_size: 32 }] } } : {}) })) };
+      } else args = { units: Array.from({ length: prompt.unit_range[1] - prompt.unit_range[0] + 1 }, (_, index) => ({ unit_index: prompt.unit_range[0] + index, title: `Unit ${prompt.unit_range[0] + index}`, body: prompt.task === "storyboard" ? "content plan" : prompt.task === "draft" && !prompt.previous_review ? "first draft" : "revised draft", evidence: ["user-brief"], missing_facts: [], ...(prompt.module === "concept" && prompt.task === "storyboard" ? { slide_copy: ["Proposed slide line"], visual_plan: "Editable site diagram showing the circulation route" } : {}), ...(prompt.module === "concept" && prompt.task === "draft" ? { slide: { background: "FFFFFF", elements: [{ kind: "text", x: 1, y: 1, w: 10, h: 2, text: `Unit ${prompt.unit_range[0] + index}`, font_size: 32 }] } } : {}) })) };
     }
     if (pressure && hasRead && !inspectedLargePage) {
       name = "read_units"; args = { kind: "storyboard", offset: 0, limit: 1 }; inspectedLargePage = true;

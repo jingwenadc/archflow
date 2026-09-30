@@ -48,7 +48,7 @@ ArchFlow 网站运行时，以服务器的已批准提纲、完整策划、授�
 
 ## 5. 提交完整逐页故事板并停止
 
-每个故事板条目必须包含 id、chapter、title、purpose、takeaway、archetype、evidence 和 assets。可选字段包括 status、notes 和 reuse_reason。使用检查器：
+每个故事板条目必须包含 id、chapter、title、purpose、takeaway、slide_copy（拟展示给观众的短文案）、visual_plan（具体图表/画面及其作用）、archetype、evidence 和 assets。可选字段包括 status、notes 和 reuse_reason。策划文案可在正式排版时校订，不得把 purpose 或 visual_plan 当作最终页面正文。使用检查器：
 
     python scripts/check_storyboard.py storyboard.json
 

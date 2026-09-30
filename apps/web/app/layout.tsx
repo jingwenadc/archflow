@@ -5,6 +5,7 @@ import { RunSettingsProvider } from "@/components/run-settings";
 export const metadata: Metadata = {
   title: "图策 ArchFlow｜建筑设计智能工作台",
   description: "面向建筑设计团队的方案设计、投标文件与施工图协同工作台。",
+  icons: { icon: [{ url: "/favicon.svg?v=2", type: "image/svg+xml", sizes: "any" }] },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

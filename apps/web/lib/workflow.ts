@@ -3,7 +3,7 @@ import type { GenerationJobRecord } from "./job-contracts";
 
 export const jobStatuses: Record<string, string> = {
   queued: "排队中", running: "正在处理资料与生成内容", waiting_outline: "提纲已准备好，等待你确认",
-  waiting_storyboard: "内容策划已准备好，等待你确认", needs_review: "内容有待确认项，请复核",
+  waiting_storyboard: "内容策划已准备好，等待你确认", needs_review: "自动审校未通过，等待修改意见",
   waiting_review: "修订稿已准备好，等待你确认",
   completed: "内容已生成", failed: "需要处理后继续", cancelled: "已停止",
 };
@@ -24,7 +24,7 @@ export function workflowState(job: GenerationJobRecord & { progress?: string | n
     : job.status === "waiting_storyboard" ? `${job.module === "concept" ? "逐页" : "逐章"}策划已准备好，请查看后确认生成`
     : job.status === "waiting_review" ? "修订稿已准备好，请核对反馈后确认排版"
     : job.status === "completed" ? "内容生成与审校完成，文件排版和下载在右侧"
-    : job.status === "needs_review" ? "已有审阅稿，请核对待确认项"
+    : job.status === "needs_review" ? "自动审校发现问题，当前版本已暂停"
     : paused ? job.stage === "storyboarding" ? `章节提纲已完成；${planning}${job.status === "cancelled" ? "已停止" : "已暂停"}` : `${job.status === "cancelled" ? "已停止" : "暂时暂停"}，原需求和已有成果保留`
     : job.progress ?? (job.stage === "planning" ? "正在阅读资料、整理提纲" : job.stage === "storyboarding"
       ? `正在策划${job.module === "concept" ? "页面" : "章节"} · ${job.storyboard_units} / ${job.target_units}` : job.stage === "final_review"

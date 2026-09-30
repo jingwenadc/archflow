@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from archflow_api.materials import DocumentRepository, collect_materials
 from archflow_api.citations import display_citations
 from archflow_api.artifacts import queue_export
-from archflow_api.models import MessageCreate, ConversationCreate, JobCheckpoint, ReviewResult
+from archflow_api.models import ArtifactUnit, MessageCreate, ConversationCreate, JobCheckpoint, ReviewResult
 from archflow_api.conversation_repository import ConversationRepository
 from test_jobs import create, ready, unit_batch, SKILLS
 from archflow_api.job_repository import JobRepository
@@ -40,6 +40,8 @@ def test_generated_tool_schemas_preserve_title_fields():
     unit = schemas["UnitBatch"]["properties"]["units"]["items"]
     assert "title" in section["properties"]
     assert "title" in unit["properties"]
+    assert "slide_copy" in unit["properties"]
+    assert "visual_plan" in unit["properties"]
     def validate(schema):
         if isinstance(schema, dict):
             if schema.get("type") == "object" and "properties" in schema:
@@ -50,6 +52,15 @@ def test_generated_tool_schemas_preserve_title_fields():
             for value in schema:
                 validate(value)
     validate(schemas)
+
+
+def test_storyboard_copy_and_visual_plan_roundtrip_without_breaking_old_units():
+    prior = ArtifactUnit(unit_index=1, title="场地", body="介绍场地条件", evidence=[], missing_facts=[])
+    assert prior.slide_copy == []
+    assert prior.visual_plan == ""
+    planned = ArtifactUnit(unit_index=2, title="多温区物流园", body="说明空间组织", evidence=["任务书:p3"],
+                           missing_facts=[], slide_copy=["多温区协同", "集中交通"], visual_plan="总图示意，标明五栋仓库与环路")
+    assert ArtifactUnit.model_validate_json(planned.model_dump_json()) == planned
 
 
 def test_message_retry_preserves_single_user_and_ack(tmp_path):

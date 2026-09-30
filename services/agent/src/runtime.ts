@@ -42,6 +42,12 @@ function conceptBatchSchema(): Record<string, unknown> {
   return batch;
 }
 
+function conceptStoryboardSchema(): Record<string, unknown> {
+  const batch = structuredClone(schemas.UnitBatch) as Record<string, any>;
+  batch.properties.units.items.required.push("slide_copy", "visual_plan");
+  return batch;
+}
+
 /** One bounded Pi session per checkpoint. SQLite, not the transcript, is the durable truth. */
 export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelConfig, signal: AbortSignal): Promise<void> {
   const job = claim.job;
@@ -112,12 +118,16 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
     },
   }, {
     name: "submit", label: "Save checkpoint", description: `Save the ${action} checkpoint exactly once, then stop. Saving a plan or complete storyboard pauses for human approval.`,
-    parameters: Type.Unsafe(action === "plan" ? schemas.DocumentPlan : ["review", "final_review"].includes(action) ? schemas.ReviewResult : action === "draft" && job.module === "concept" ? conceptBatchSchema() : schemas.UnitBatch),
+    parameters: Type.Unsafe(action === "plan" ? schemas.DocumentPlan : ["review", "final_review"].includes(action) ? schemas.ReviewResult
+      : job.module === "concept" && action === "storyboard" ? conceptStoryboardSchema()
+      : job.module === "concept" && action === "draft" ? conceptBatchSchema() : schemas.UnitBatch),
     executionMode: "sequential",
     async execute(_id, args) {
       if (submitted || signal.aborted) throw new Error("Checkpoint already submitted or run cancelled.");
       const selected = action === "plan" ? (args as { skill_slug: string }).skill_slug : job.outline?.skill_slug;
       if (!selected || !loaded.has(selected)) throw new Error("Read the selected SKILL.md and required references fully before submitting, including after context compaction.");
+      if (job.module === "concept" && action === "storyboard" && (args as UnitBatch).units.some(unit => !unit.slide_copy?.length || !unit.visual_plan?.trim()))
+        throw new Error("每页策划都需填写拟展示文字和图表/画面方案，供用户审阅后再生成页面。");
       if (job.module === "concept" && action === "draft" && Object.keys(claim.skills.find(skill => skill.slug === selected)?.images ?? {}).length && !viewedAtlases.size)
         throw new Error("请先调用 view_skill_image 查看所选技能的视觉图集，再设计并提交这一批页面。");
       if (job.module === "concept" && action === "draft" && previewedFingerprint !== batchFingerprint(args as UnitBatch))
@@ -286,8 +296,8 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
       outline: job.outline, unit_range: [start, end], existing_units: current, storyboard_units: storyboard, previous_review: batch?.review,
       batch_reviews: action === "final_review" ? job.batches.map(item => ({ range: [item.start_unit, item.end_unit], status: item.status, summary: item.review?.summary.slice(0, 400) })) : undefined,
       instructions: action === "plan" ? "Choose the most suitable skill from the catalog. target_units is the confirmed deliverable length, NOT the number of outline sections. For concept it means actual slides; for bid it means chapters. Create at most 30 contiguous outline sections covering every requested unit exactly once. A section can span many pages. Set plan.target_units to this confirmed count. Summary is project/design strategy, NOT document length, workflow narration or approval instructions: those are displayed separately by the app. The typed scope overrides any earlier length in the brief. Missing inputs should be identified, not invented. Submit plan; await human approval externally."
-        : action === "storyboard" ? "Create exactly the requested consecutive storyboard units as INTERNAL PRODUCTION PLANS. In each body explain the intended audience takeaway, source facts to use, visual/table direction and narrative role. Do not write final audience-facing slide or bid copy yet. Put material unknowns only in missing_facts."
-        : action === "draft" ? "Turn each approved storyboard unit into FINISHED AUDIENCE-FACING CONTENT supported by actual source evidence. For concept, author the entire editable visual composition in slide.elements. Use supplied images, native text, tables and diagrams as appropriate; do not repeat one template. Body is the searchable summary, not automatically placed on the slide. Call preview_slides with the full batch, inspect every real slide image, fix issues, and preview again after changes before submitting exactly that batch. For bid chapters write substantive professional prose, not an outline or writing advice. Titles may match the storyboard, but bodies must not copy or lightly paraphrase planning notes. Never put internal production directions in the deliverable. Resolve previous review issues. For a scoped revision, only change revision_units and return every other existing unit unchanged. Use read_units(kind=draft) to obtain those original units. Do not include units outside this batch."
+        : action === "storyboard" ? "Create exactly the requested consecutive storyboard units as INTERNAL PRODUCTION PLANS. For concept: title is the proposed on-slide title; slide_copy lists the exact short audience-facing lines proposed beneath it; visual_plan names the chart, diagram or source image and explains what it should prove. In body explain the page's purpose and factual basis, without repeating the proposed copy or claiming that a visual already exists. Cite source pages in evidence and put material unknowns only in missing_facts. For bid chapters, body is a chapter plan."
+        : action === "draft" ? "Turn each approved storyboard unit into FINISHED AUDIENCE-FACING CONTENT supported by actual source evidence. For concept, use the approved title, slide_copy and visual_plan as the baseline and author the entire editable visual composition in slide.elements. Use supplied images, native text, tables and diagrams as appropriate; do not repeat one template. Body is the searchable summary, not automatically placed on the slide. Call preview_slides with the full batch, inspect every real slide image, fix issues, and preview again after changes before submitting exactly that batch. For bid chapters write substantive professional prose, not an outline or writing advice. Titles may match the storyboard, but bodies must not copy or lightly paraphrase planning notes. Never put internal production directions in the deliverable. Resolve previous review issues. For a scoped revision, only change revision_units and return every other existing unit unchanged. Use read_units(kind=draft) to obtain those original units. Do not include units outside this batch."
         : action === "review" ? "Independently compare EVERY drafted unit in existing_units with storyboard_units, selected skill, confirmed brief and evidence. For concept, call preview_slides to inspect every actual rendered page before review. Fail for clutter, tiny text, repetitive template-like design, poor image use, overflow or content defects. Fail if draft prose repeats planning notes, narrates instructions, or misuses source/reference evidence. Titles may legitimately match. Give specific unit-indexed issues the drafting pass can fix. passed=true requires issues=[]."
         : "Perform a cross-batch consistency review of the outline and all independently passed batch reviews. Read actual draft units at section boundaries and any suspect content via read_units. Detailed page review has already happened per batch; do not pretend to re-read the entire document here. Check coverage, contradictions, repeated content and factual limits. Unresolved required facts mean passed=false; this remains a review draft, not a final professional deliverable.",
     });

@@ -11,6 +11,7 @@ import { OutputPreview } from "./output-preview";
 import { WorkflowProgress } from "./workflow-progress";
 import { useRunSettings } from "./run-settings";
 import { ReviewEditor, ReviewProvider } from "./review-controls";
+import { QualityReviewNotice } from "./quality-review-notice";
 
 export function GenerationPanel({ projectId, conversationId, module, messages, outputMount, onOutputAvailable, materialsReady, ready, sendingMessage }: {
   projectId: string; conversationId: string | null; module: "concept" | "bid" | "drawing"; messages: Message[];
@@ -173,8 +174,7 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
           {!pendingRequirement && job.status === "failed" && failure.kind !== "budget" && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/retry`)}>{failure.retry}</button>}
           {!pendingRequirement && job.status === "failed" && failure.kind === "budget" && <><button disabled={busy || !limits || Math.max(limits.max_total_tokens, job.max_total_tokens) <= job.total_tokens || Math.max(limits.max_model_calls, job.max_model_calls) <= job.model_calls} onClick={() => { if (limits) void perform(`/api/v1/jobs/${job.id}/continue`, { max_model_calls: Math.max(limits.max_model_calls, job.max_model_calls), max_total_tokens: Math.max(limits.max_total_tokens, job.max_total_tokens) }); }}>按顶部运行设置继续</button><button onClick={openSettings}>调整运行设置</button></>}
         </div>}
-        {job.batches.filter(batch => batch.review && !batch.review.passed).map(batch => <p className="generation-error" key={batch.batch_index}>{batch.review?.summary} {batch.review?.issues.join("；")}</p>)}
-        {job.final_review && !job.final_review.passed && <p className="generation-error">{job.final_review.summary} {job.final_review.issues.join("；")}</p>}
+        <QualityReviewNotice job={job} />
       </div>}
       <ReviewEditor job={record} version={version} current={current}
         approveAction={current && job && !pendingRequirement && ["waiting_outline", "waiting_storyboard", "waiting_review"].includes(job.status) ? <button className="generation-approve" disabled={busy} title={job.status === "waiting_outline" ? `批准提纲，继续${planningLabel}` : job.status === "waiting_storyboard" ? `批准${planningLabel}并授权生成全部内容` : "确认修订稿，继续排版"} onClick={() => void perform(`/api/v1/jobs/${job.id}/approve`)}>{job.status === "waiting_outline" ? "批准提纲" : job.status === "waiting_storyboard" ? `批准策划并生成全部 ${job.target_units} ${job.module === "concept" ? "页" : "章"}` : "确认修订稿"}</button> : undefined}

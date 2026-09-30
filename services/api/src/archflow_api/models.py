@@ -247,6 +247,10 @@ class ArtifactUnit(BaseModel):
     body: str = Field(min_length=1, max_length=12000)
     evidence: list[str] = Field(max_length=30)
     missing_facts: list[str] = Field(max_length=30)
+    slide_copy: list[Annotated[str, Field(min_length=1, max_length=220)]] = Field(default_factory=list, max_length=8,
+        description="Storyboard only: proposed audience-facing text below the title, in display order.")
+    visual_plan: str = Field(default="", max_length=1200,
+        description="Storyboard only: the chart, diagram or source image to show and what it proves.")
     layout: Literal["cover", "text", "image", "table"] = "text"
     image_id: str | None = None
     table: list[list[str]] = Field(default_factory=list, max_length=15)

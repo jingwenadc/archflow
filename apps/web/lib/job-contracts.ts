@@ -11,6 +11,8 @@ export type ArtifactUnit = {
   body: string;
   evidence: Array<string>;
   missing_facts: Array<string>;
+  slide_copy?: Array<string>;
+  visual_plan?: string;
   layout?: "cover" | "text" | "image" | "table";
   image_id?: string | null;
   table?: Array<Array<string>>;

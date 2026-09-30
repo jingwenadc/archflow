@@ -69,7 +69,8 @@ try {
       await editor.waitFor();
       assert.equal(await card.getByRole("combobox", { name: "V2 反馈阶段", exact: true }).inputValue(), phase.kind);
       const actions = card.getByRole("group", { name: "V2 审阅操作", exact: true });
-      assert.deepEqual(await actions.getByRole("button").allTextContents(), [phase.approve, "修改意见", "取消任务"]);
+      const approveLabel = phase.kind === "storyboard" ? `批准策划并生成全部 6 ${module === "concept" ? "页" : "章"}` : phase.approve;
+      assert.deepEqual(await actions.getByRole("button").allTextContents(), [approveLabel, "修改意见", "取消任务"]);
       for (const width of [1536, 1024]) {
         await page.setViewportSize({ width, height: 1050 });
         const boxes = await actions.getByRole("button").evaluateAll(buttons => buttons.map(button => {
@@ -109,7 +110,7 @@ try {
       jobs[2].status = phase.status; jobs[2].updated_at = timestamp();
       await revised.getByRole("textbox", { name: "V3 整体意见", exact: true }).waitFor();
       assert.equal(await revised.getByRole("combobox", { name: "V3 反馈阶段", exact: true }).inputValue(), phase.kind);
-      assert.deepEqual(await revised.locator(".review-actions button").allTextContents(), [phase.approve, "修改意见", "取消任务"]);
+      assert.deepEqual(await revised.locator(".review-actions button").allTextContents(), [approveLabel, "修改意见", "取消任务"]);
       assert.deepEqual(errors, []); assert.deepEqual(unexpected, []);
       if (process.env.ARCHFLOW_PHASE_SCREENSHOT && module === "concept" && phase.kind === "outline") {
         await revised.scrollIntoViewIfNeeded();
