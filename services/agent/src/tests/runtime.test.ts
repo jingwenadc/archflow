@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { ApiClient } from "../client.js";
 import { processJob } from "../worker.js";
 import { assertDraftDistinct, readSkill, runStep, type ModelConfig } from "../runtime.js";
-import type { ArtifactUnit, ClaimedJob, GenerationJobDetail, JobCheckpoint, UsageRecord, WorkerProgress, AgentMemory, UnitBatch } from "../contracts.js";
+import type { ArtifactUnit, ClaimedJob, GenerationJobDetail, JobCheckpoint, UsageRecord, WorkerProgress, WorkerDiagnostic, AgentMemory, UnitBatch } from "../contracts.js";
 import { contextOverride, modelLimits } from "../model-limits.js";
 import { WorkflowError, isRetryableProviderError } from "../errors.js";
 
@@ -27,6 +27,7 @@ class MemoryApi extends ApiClient {
   previewed = 0;
   previewUnits = 0;
   traces: Array<{ callId: string; phase: "request" | "response"; data: Record<string, unknown> }> = [];
+  diagnostics: WorkerDiagnostic[] = [];
   traceFailure?: "request" | "response";
   constructor() { super("http://unused", "test"); }
   override async detail() { return structuredClone(this.job); }
@@ -34,6 +35,7 @@ class MemoryApi extends ApiClient {
   override async progress(_id: string, _lease: string, body: WorkerProgress) {
     this.steps.push(body.step); if (body.memory) this.memory = body.memory;
   }
+  override async diagnostic(_id: string, _lease: string, body: WorkerDiagnostic) { this.diagnostics.push(body); }
   override async units(_id: string, kind: "draft" | "storyboard", offset: number, limit = 10) { return this.data[kind].slice(offset, offset + limit); }
   override async reviewUnits(_id: string, kind: "draft" | "storyboard", offset: number, limit = 5) { return this.data[kind].slice(offset, offset + limit); }
   override async startSlidePreview(_id: string, _lease: string, batch: UnitBatch) {
@@ -76,7 +78,7 @@ class MemoryApi extends ApiClient {
 }
 
 /** A deterministic SSE fixture exercises the REAL Pi Responses adapter and tool loop. */
-async function provider(pressure = false, failFirst?: "disconnect" | "unavailable" | "unauthorized") {
+async function provider(pressure = false, failFirst?: "disconnect" | "unavailable" | "unauthorized" | "terminated") {
   const requests: Record<string, unknown>[] = [];
   let lastPrompt: Record<string, any>;
   let inspectedLargePage = false;
@@ -89,6 +91,11 @@ async function provider(pressure = false, failFirst?: "disconnect" | "unavailabl
     assert.equal(req.headers.authorization, "Bearer test-only");
     if (requests.length === 1 && failFirst) {
       if (failFirst === "disconnect") { req.socket.destroy(); return; }
+      if (failFirst === "terminated") {
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        res.end(`event: response.failed\ndata: ${JSON.stringify({ type: "response.failed", response: { id: "failed-1", object: "response", status: "failed", output: [], error: { code: "stream_error", message: "terminated" }, usage: { input_tokens: 12, output_tokens: 0, total_tokens: 12 } } })}\n\n`);
+        return;
+      }
       const status = failFirst === "unavailable" ? 503 : 401;
       res.writeHead(status, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: { message: failFirst === "unavailable" ? "Service temporarily unavailable" : "Invalid API key", type: "api_error" } }));
@@ -176,6 +183,9 @@ test("Pi selects/reads skills, pauses for two approvals, iterates revisions and 
     assert.equal(api.traces.filter(item => item.phase === "request").length, endpoint.requests.length);
     assert.equal(api.traces.filter(item => item.phase === "response").length, endpoint.requests.length);
     assert.ok(api.traces.every(item => !JSON.stringify(item.data).includes("test-only")), "API key must not enter traces");
+    assert.equal(api.diagnostics.filter(item => item.event === "model_call" && item.outcome === "started").length, endpoint.requests.length);
+    assert.equal(api.diagnostics.filter(item => item.event === "model_call" && item.outcome === "completed").length, endpoint.requests.length);
+    assert.ok(api.diagnostics.every(item => !JSON.stringify(item).includes("test-only")), "Diagnostics must not contain credentials");
     assert.ok(endpoint.requests.every(request => !request.prompt_cache_key), "Gateway-unsafe affinity must remain disabled.");
     assert.equal(api.job.total_tokens, endpoint.requests.length * 120);
     assert.ok(endpoint.requests.some(request => request.model === "review-model"));
@@ -256,16 +266,16 @@ test("configuration and budget failures are typed, not inferred from their wordi
 });
 
 test("only transient provider failures qualify for automatic replay", () => {
-  for (const message of ["Connection error.", "fetch failed", "request timed out", "502 Bad Gateway", "503 Service Unavailable", "429 rate limit", "ECONNRESET"]) {
+  for (const message of ["Connection error.", "fetch failed", "request timed out", "502 Bad Gateway", "503 Service Unavailable", "429 rate limit", "ECONNRESET", "terminated", "stream_error: terminated"]) {
     assert.equal(isRetryableProviderError(new WorkflowError("provider", message)), true, message);
   }
-  for (const message of ["Invalid API key", "401 Unauthorized", "insufficient_quota: 429", "Billing limit reached", "Invalid request", "Context length exceeded"]) {
+  for (const message of ["Invalid API key", "401 Unauthorized", "insufficient_quota: 429", "Billing limit reached", "Invalid request", "Context length exceeded", "user terminated task"]) {
     assert.equal(isRetryableProviderError(new WorkflowError("provider", message)), false, message);
   }
   assert.equal(isRetryableProviderError(new WorkflowError("budget", "Connection error.")), false);
 });
 
-for (const failure of ["disconnect", "unavailable"] as const) test(`${failure}: worker retries the current saved checkpoint`, async () => {
+for (const failure of ["disconnect", "unavailable", "terminated"] as const) test(`${failure}: worker retries the current saved checkpoint`, async () => {
   const endpoint = await provider(false, failure); const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-retry-"));
   const api = new MemoryApi();
   api.job.module = "bid";
@@ -281,6 +291,14 @@ for (const failure of ["disconnect", "unavailable"] as const) test(`${failure}: 
     assert.equal(api.job.completed_units, 8);
     assert.equal(api.job.batches[0].draft_count, 1, "saved draft must not be regenerated");
     assert.ok(api.steps.includes("retrying"));
+    const retry = api.diagnostics.find(item => item.event === "retry");
+    assert.equal(retry?.attempt, 1);
+    assert.ok((retry?.retry_delay_ms ?? 0) > 0);
+    assert.equal(retry?.retry_reason, "transient_provider");
+    if (failure === "terminated") assert.equal(retry?.error_message, "stream_terminated");
+    assert.ok(api.diagnostics.some(item => item.event === "step_start" && item.attempt === 2 && item.action === "review"));
+    assert.ok(api.diagnostics.some(item => item.event === "step_end" && item.outcome === "completed" && item.attempt === 2));
+    if (failure === "unavailable") assert.equal(api.diagnostics.find(item => item.event === "model_call" && item.outcome === "failed")?.provider_status, 503);
     assert.equal(api.job.model_calls, endpoint.requests.length, "each physical attempt reserves a call");
     const prompts = endpoint.requests.flatMap(request => request.input as Array<{ role?: string; content?: Array<{ text?: string }> }>)
       .filter(item => item.role === "user").flatMap(item => item.content ?? []).filter(item => item.text?.startsWith('{"task"')).map(item => JSON.parse(item.text!));

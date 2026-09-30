@@ -19,7 +19,7 @@ from fastapi import HTTPException
 from .models import (
     ArtifactUnit, ClaimedJob, DocumentPlan, GenerationBatchRecord, GenerationJobCreate,
     GenerationJobDetail, GenerationJobEvent, GenerationJobRecord, JobCheckpoint,
-    ReviewResult, SkillSnapshot, UsageRecord, AgentMemory, WorkerProgress, RunLimits,
+    ReviewResult, SkillSnapshot, UsageRecord, AgentMemory, WorkerProgress, WorkerDiagnostic, RunLimits,
     ReviewSubmission,
 )
 from .materials import DocumentRepository
@@ -307,7 +307,13 @@ class JobRepository:
         with self.connect() as db:
             self.require(db, job_id)
             return [GenerationJobEvent(**dict(row)) for row in db.execute(
-                "SELECT * FROM generation_events WHERE job_id=? AND id>? ORDER BY id LIMIT 100", (job_id, after))]
+                "SELECT * FROM generation_events WHERE job_id=? AND id>? AND event_type!='diagnostic' ORDER BY id LIMIT 100", (job_id, after))]
+
+    def diagnostic(self, job_id: str, lease_id: str, request: WorkerDiagnostic) -> None:
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.leased(db, job_id, lease_id)
+            self.event(db, job_id, "diagnostic", request.model_dump_json(exclude_none=True))
 
     def claim(self) -> ClaimedJob | None:
         now = time.time()

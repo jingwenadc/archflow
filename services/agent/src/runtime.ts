@@ -8,7 +8,7 @@ import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager
 import { ApiClient } from "./client.js";
 import { schemas, type ArtifactUnit, type ClaimedJob, type JobCheckpoint, type UnitBatch } from "./contracts.js";
 import { modelLimits } from "./model-limits.js";
-import { WorkflowError } from "./errors.js";
+import { WorkflowError, diagnosticError } from "./errors.js";
 
 export type ModelConfig = { baseUrl: string; apiKey: string; contextWindow?: number; maxOutputTokens: number; workDir: string };
 
@@ -48,15 +48,20 @@ function conceptStoryboardSchema(): Record<string, unknown> {
   return batch;
 }
 
-/** One bounded Pi session per checkpoint. SQLite, not the transcript, is the durable truth. */
-export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelConfig, signal: AbortSignal): Promise<void> {
-  const job = claim.job;
+export function stepContext(job: ClaimedJob["job"]) {
   const batch = job.batches.find(item => item.status !== "completed");
   const reviewing = job.stage === "final_review" || (job.stage === "generating" && batch?.status === "draft" && !batch.review);
   const modelId = reviewing ? job.review_model : job.model;
-  const action: JobCheckpoint["action"] = job.stage === "planning" ? "plan" : job.stage === "storyboarding" ? "storyboard" : reviewing ? (job.stage === "final_review" ? "final_review" : "review") : "draft";
+  const action: Exclude<JobCheckpoint["action"], "failure"> = job.stage === "planning" ? "plan" : job.stage === "storyboarding" ? "storyboard" : reviewing ? (job.stage === "final_review" ? "final_review" : "review") : "draft";
   const start = job.stage === "storyboarding" ? job.storyboard_range?.[0] ?? job.storyboard_units + 1 : batch?.start_unit ?? 1;
   const end = Math.min(job.target_units, job.stage === "storyboarding" ? job.storyboard_range?.[1] ?? start + job.batch_size - 1 : batch?.end_unit ?? job.target_units);
+  return { action, start, end, modelId, batch, reviewing };
+}
+
+/** One bounded Pi session per checkpoint. SQLite, not the transcript, is the durable truth. */
+export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelConfig, signal: AbortSignal, attempt = 1): Promise<void> {
+  const job = claim.job;
+  const { action, start, end, modelId, batch, reviewing } = stepContext(job);
   const limits = modelLimits(modelId, config.contextWindow, config.maxOutputTokens);
   let storyboard: ArtifactUnit[] = [];
   let current: ArtifactUnit[] = [];
@@ -239,23 +244,45 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
     await progressWrites;
     if (progressError) throw progressError;
     const callId = randomUUID();
+    const callStarted = performance.now();
+    let providerStatus: number | undefined;
+    let providerRequestId: string | undefined;
+    const diagnostic = async (outcome: "started" | "completed" | "failed", error?: unknown) => api.diagnostic(job.id, claim.lease_id, {
+      event: "model_call", action, attempt, unit_start: start, unit_end: end, outcome, call_id: callId, model: modelId,
+      elapsed_ms: Math.round(performance.now() - callStarted), provider_status: providerStatus,
+      provider_request_id: providerRequestId, ...(error ? { error_kind: error instanceof WorkflowError ? error.kind : "provider", error_message: diagnosticError(error) } : {}),
+    }).catch(() => undefined);
     // Fail CLOSED before any provider request; Pi extension errors alone are not a budget gate.
     try { await api.call(job.id, claim.lease_id, "reserve", { call_id: callId, model: modelId, total_tokens: 0 }); }
     catch (error) { streamError = error; throw error; } // Preserve typed local errors across the SDK message boundary.
+    await diagnostic("started");
     // Some Responses gateways reject Pi's session-affinity headers with HTTP 520.
     // The durable task is already in SQLite; provider-side session affinity is unnecessary.
     let stream: Awaited<ReturnType<typeof originalStream>>;
     try {
-      stream = await originalStream(currentModel, context, { ...options, sessionId: undefined, cacheRetention: "none", signal: AbortSignal.any([signal, ...(options?.signal ? [options.signal] : [])]), onPayload: async (payload, providerModel) => {
+      stream = await originalStream(currentModel, context, { ...options, sessionId: undefined, cacheRetention: "none", signal: AbortSignal.any([signal, ...(options?.signal ? [options.signal] : [])]), fetch: async (input, init) => {
+        const response = await (options?.fetch ?? globalThis.fetch)(input, init);
+        providerStatus = response.status;
+        const requestId = response.headers.get("x-request-id") ?? response.headers.get("openai-request-id");
+        if (requestId) providerRequestId = requestId.slice(0, 200);
+        return response;
+      }, onResponse: async (response, providerModel) => {
+        providerStatus = response.status;
+        const requestId = response.headers["x-request-id"] ?? response.headers["openai-request-id"];
+        if (requestId) providerRequestId = requestId.slice(0, 200);
+        await options?.onResponse?.(response, providerModel);
+      }, onPayload: async (payload, providerModel) => {
         const transformed = await options?.onPayload?.(payload, providerModel) ?? payload;
         const request = { ...transformed as Record<string, unknown>, store: false, max_output_tokens: limits.maxOutputTokens };
         // Persist the exact provider-bound body before sending a billable request.
-        await api.trace(job.id, claim.lease_id, callId, "request", safeTrace({ model: modelId, action, body: request }));
+        await api.trace(job.id, claim.lease_id, callId, "request", safeTrace({ model: modelId, action, attempt, unit_range: [start, end], body: request }));
         return request;
       } });
     } catch (error) {
       streamError = error;
-      await api.trace(job.id, claim.lease_id, callId, "response", safeTrace({ error: error instanceof Error ? error.message : String(error) })).catch(() => {});
+      await api.trace(job.id, claim.lease_id, callId, "response", safeTrace({ error: error instanceof Error ? error.message : String(error),
+        provider_status: providerStatus, provider_request_id: providerRequestId, elapsed_ms: Math.round(performance.now() - callStarted) })).catch(() => {});
+      await diagnostic("failed", error);
       throw error;
     }
     // Compaction bypasses agent message_end, so account at the shared stream boundary.
@@ -270,11 +297,13 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
           if (event.type === "done" || event.type === "error") {
             const message = event.type === "done" ? event.message : event.error;
             let traceFailure: unknown;
-            try { await api.trace(job.id, claim.lease_id, callId, "response", safeTrace({ outcome: event.type, message, events: recordedEvents })); }
+            try { await api.trace(job.id, claim.lease_id, callId, "response", safeTrace({ outcome: event.type, message, events: recordedEvents,
+              provider_status: providerStatus, provider_request_id: providerRequestId, elapsed_ms: Math.round(performance.now() - callStarted) })); }
             catch (error) { traceFailure = error; }
             await api.call(job.id, claim.lease_id, "usage", { call_id: callId, model: modelId, total_tokens: message.usage.totalTokens });
             usageRecorded = true;
             if (traceFailure) throw traceFailure;
+            await diagnostic(event.type === "done" && message.stopReason !== "error" ? "completed" : "failed", message.stopReason === "error" ? new WorkflowError("provider", message.errorMessage ?? "Provider error") : undefined);
           }
           accounted.push(event);
         }
@@ -283,7 +312,9 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
         streamError = error;
         const message = await stream.result();
         await api.trace(job.id, claim.lease_id, callId, "response", safeTrace({ outcome: "error", message, events: recordedEvents,
-          error: error instanceof Error ? error.message : String(error) })).catch(() => {});
+          error: error instanceof Error ? error.message : String(error), provider_status: providerStatus,
+          provider_request_id: providerRequestId, elapsed_ms: Math.round(performance.now() - callStarted) })).catch(() => {});
+        await diagnostic("failed", error);
         if (!usageRecorded && message.usage?.totalTokens) {
           await api.call(job.id, claim.lease_id, "usage", { call_id: callId, model: modelId, total_tokens: message.usage.totalTokens }).catch(() => {});
         }

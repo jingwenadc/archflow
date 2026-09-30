@@ -250,8 +250,26 @@ export type UsageRecord = {
   total_tokens: number;
 };
 
+export type WorkerDiagnostic = {
+  event: "step_start" | "step_end" | "model_call" | "retry";
+  action: "plan" | "storyboard" | "draft" | "review" | "final_review";
+  attempt: number;
+  unit_start: number;
+  unit_end: number;
+  outcome: "started" | "completed" | "failed" | "retrying";
+  call_id?: string | null;
+  model?: string | null;
+  elapsed_ms?: number | null;
+  provider_status?: number | null;
+  provider_request_id?: string | null;
+  error_kind?: "budget" | "context" | "configuration" | "provider" | "workflow" | null;
+  error_message?: string | null;
+  retry_delay_ms?: number | null;
+  retry_reason?: "transient_provider" | "retry_exhausted" | "step_deadline" | null;
+};
+
 export type WorkerProgress = {
-  step: "skills" | "materials" | "planning" | "storyboarding" | "generating" | "previewing" | "reviewing" | "compacting" | "continuing";
+  step: "skills" | "materials" | "planning" | "storyboarding" | "generating" | "previewing" | "reviewing" | "compacting" | "continuing" | "retrying";
   memory?: AgentMemory | null;
 };
 

@@ -2,10 +2,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { ApiClient } from "./client.js";
-import { runStep, type ModelConfig } from "./runtime.js";
+import { runStep, stepContext, type ModelConfig } from "./runtime.js";
 import { contextOverride } from "./model-limits.js";
 import type { ClaimedJob } from "./contracts.js";
-import { WorkflowError, isRetryableProviderError } from "./errors.js";
+import { WorkflowError, diagnosticError, isRetryableProviderError } from "./errors.js";
 
 const MAX_PROVIDER_RETRIES = 4;
 const RETRY_BASE_MS = 1_000;
@@ -26,14 +26,32 @@ export async function processJob(api: ApiClient, claim: ClaimedJob, config: Mode
     while (claim.job.status === "running" && !signal.aborted) {
       const stepSignal = AbortSignal.any([signal, AbortSignal.timeout(15 * 60_000)]);
       for (let retries = 0; ; retries++) {
-        try { await runStep(api, claim, config, stepSignal); break; }
+        const { action, start, end, modelId } = stepContext(claim.job);
+        const base = { action, attempt: retries + 1, unit_start: start, unit_end: end, model: modelId };
+        const started = performance.now();
+        await api.diagnostic(claim.job.id, claim.lease_id, { ...base, event: "step_start", outcome: "started" }).catch(() => undefined);
+        try {
+          await runStep(api, claim, config, stepSignal, retries + 1);
+          await api.diagnostic(claim.job.id, claim.lease_id, { ...base, event: "step_end", outcome: "completed", elapsed_ms: Math.round(performance.now() - started) }).catch(() => undefined);
+          break;
+        }
         catch (error) {
-          if (!isRetryableProviderError(error) || retries >= MAX_PROVIDER_RETRIES || stepSignal.aborted) throw error;
+          const retryable = isRetryableProviderError(error) && retries < MAX_PROVIDER_RETRIES && !stepSignal.aborted;
+          const backoff = Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** retries);
+          const retryDelay = retryable ? Math.round(backoff * (0.75 + Math.random() * 0.5)) : undefined;
+          await api.diagnostic(claim.job.id, claim.lease_id, { ...base, event: "step_end", outcome: "failed",
+            elapsed_ms: Math.round(performance.now() - started),
+            error_kind: error instanceof WorkflowError ? error.kind : "workflow", error_message: diagnosticError(error),
+            retry_reason: stepSignal.aborted && !signal.aborted ? "step_deadline" : isRetryableProviderError(error) && retries >= MAX_PROVIDER_RETRIES ? "retry_exhausted" : undefined,
+          }).catch(() => undefined);
+          if (!retryable) throw error;
           // Each attempt creates a fresh Pi session and reserves a fresh model call.
           // Persisted batches remain authoritative; no earlier checkpoint is replayed.
+          await api.diagnostic(claim.job.id, claim.lease_id, { ...base, event: "retry", outcome: "retrying",
+            error_kind: "provider", error_message: diagnosticError(error), retry_delay_ms: retryDelay, retry_reason: "transient_provider",
+          }).catch(() => undefined);
           await api.progress(claim.job.id, claim.lease_id, { step: "retrying" }).catch(() => undefined);
-          const backoff = Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** retries);
-          await delay(Math.round(backoff * (0.75 + Math.random() * 0.5)), undefined, { signal: stepSignal });
+          await delay(retryDelay, undefined, { signal: stepSignal });
         }
       }
       claim.job = await api.detail(claim.job.id);

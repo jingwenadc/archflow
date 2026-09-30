@@ -42,7 +42,7 @@ def resolve(schema: dict, definitions: dict) -> dict:
 
 root = Path(__file__).resolve().parents[3]
 definitions = {}
-names = ["GenerationJobCreate", "GenerationJobRecord", "GenerationJobDetail", "ClaimedJob", "JobCheckpoint", "UsageRecord", "GenerationJobEvent", "WorkerProgress", "RunLimits", "RequirementDraft", "ResolvedRequirement", "ReviewCommentCreate", "ReviewComment", "ReviewSubmission"]
+names = ["GenerationJobCreate", "GenerationJobRecord", "GenerationJobDetail", "ClaimedJob", "JobCheckpoint", "UsageRecord", "GenerationJobEvent", "WorkerProgress", "WorkerDiagnostic", "RunLimits", "RequirementDraft", "ResolvedRequirement", "ReviewCommentCreate", "ReviewComment", "ReviewSubmission"]
 for name in names:
     schema = getattr(models, name).model_json_schema()
     definitions.update(schema.pop("$defs", {}))

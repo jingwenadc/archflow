@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .requirements import scope_mismatch
 
@@ -340,6 +340,25 @@ class AgentMemory(BaseModel):
 class WorkerProgress(BaseModel):
     step: Literal["skills", "materials", "planning", "storyboarding", "generating", "previewing", "reviewing", "compacting", "continuing", "retrying"]
     memory: AgentMemory | None = None
+
+
+class WorkerDiagnostic(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event: Literal["step_start", "step_end", "model_call", "retry"]
+    action: Literal["plan", "storyboard", "draft", "review", "final_review"]
+    attempt: int = Field(ge=1, le=100)
+    unit_start: int = Field(ge=1)
+    unit_end: int = Field(ge=1)
+    outcome: Literal["started", "completed", "failed", "retrying"]
+    call_id: str | None = Field(default=None, max_length=200)
+    model: str | None = Field(default=None, max_length=200)
+    elapsed_ms: int | None = Field(default=None, ge=0)
+    provider_status: int | None = Field(default=None, ge=100, le=599)
+    provider_request_id: str | None = Field(default=None, max_length=200)
+    error_kind: FailureKind | None = None
+    error_message: str | None = Field(default=None, max_length=500)
+    retry_delay_ms: int | None = Field(default=None, ge=0)
+    retry_reason: Literal["transient_provider", "retry_exhausted", "step_deadline"] | None = None
 
 
 class GenerationBatchRecord(BaseModel):

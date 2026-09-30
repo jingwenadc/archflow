@@ -14,7 +14,7 @@ from .conversation_repository import ConversationRepository
 from .job_repository import JobRepository, snapshot_skills
 from .models import (
     ArtifactUnit, ClaimedJob, GenerationJobCreate, GenerationJobDetail,
-    GenerationJobEvent, GenerationJobRecord, JobCheckpoint, UsageRecord, WorkerProgress, RunLimits,
+    GenerationJobEvent, GenerationJobRecord, JobCheckpoint, UsageRecord, WorkerProgress, WorkerDiagnostic, RunLimits,
     ReviewComment, ReviewCommentCreate, ReviewSubmission, SkillSnapshot, UnitBatch,
 )
 from .project_repository import ProjectRepository
@@ -206,23 +206,51 @@ def job_routers(settings: Settings, projects: ProjectRepository,
             queue_export(detail, jobs, projects, documents)
         return detail
 
+    def diagnostic_content(job_id: str, detail: GenerationJobDetail, include_model_io: bool):
+        yield '{"job":' + detail.model_dump_json() + ',"units":['
+        with jobs.connect() as db:
+            db.execute("BEGIN")
+            rows = db.execute("SELECT payload FROM generation_units WHERE job_id=? AND kind='draft' ORDER BY unit_index", (job_id,))
+            for index, row in enumerate(rows):
+                yield ("," if index else "") + row[0]
+            yield '],"workflow_events":['
+            rows = db.execute("SELECT id,event_type,message,created_at FROM generation_events WHERE job_id=? AND event_type!='diagnostic' ORDER BY id", (job_id,))
+            for index, row in enumerate(rows):
+                yield ("," if index else "") + json.dumps(dict(row), ensure_ascii=False)
+            yield '],"diagnostics":['
+            rows = db.execute("SELECT id,created_at,message FROM generation_events WHERE job_id=? AND event_type='diagnostic' ORDER BY id", (job_id,))
+            for index, row in enumerate(rows):
+                yield ("," if index else "") + json.dumps({"id": row[0], "time": row[1], **json.loads(row[2])}, ensure_ascii=False)
+            yield '],"model_calls":['
+            rows = db.execute("SELECT call_id,model,total_tokens FROM generation_calls WHERE job_id=? ORDER BY rowid", (job_id,))
+            for index, row in enumerate(rows):
+                yield ("," if index else "") + json.dumps(dict(row), ensure_ascii=False)
+            if include_model_io:
+                yield '],"model_io":['
+                rows = db.execute("SELECT call_id FROM generation_calls WHERE job_id=? ORDER BY rowid", (job_id,))
+                for index, row in enumerate(rows):
+                    trace = traces.read(detail.project_id, job_id, row[0])
+                    status = "complete" if "request" in trace and "response" in trace else "partial" if trace else "missing"
+                    yield ("," if index else "") + json.dumps({"call_id": row[0], "trace_status": status, **trace}, ensure_ascii=False)
+        yield "]}"
+
     @public.get("/{job_id}/download")
     def download(job_id: str) -> StreamingResponse:
         detail = jobs.detail(job_id)
         if detail.status not in {"completed", "needs_review", "failed", "cancelled"}:
             raise HTTPException(409, "Wait until generation stops before downloading a draft.")
 
-        def content():
-            yield '{"job":' + detail.model_dump_json() + ',"units":['
-            with jobs.connect() as db:
-                db.execute("BEGIN")
-                rows = db.execute("SELECT payload FROM generation_units WHERE job_id=? AND kind='draft' ORDER BY unit_index", (job_id,))
-                for index, row in enumerate(rows):
-                    yield ("," if index else "") + row[0]
-            yield "]}"
-
-        return StreamingResponse(content(), media_type="application/json", headers={
+        return StreamingResponse(diagnostic_content(job_id, detail, False), media_type="application/json", headers={
             "Content-Disposition": f'attachment; filename="archflow-{job_id}-draft.json"',
+            "Cache-Control": "no-store",
+        })
+
+    @public.get("/{job_id}/debug-download")
+    def admin_debug_download(job_id: str) -> StreamingResponse:
+        require_admin()
+        detail = jobs.detail(job_id)
+        return StreamingResponse(diagnostic_content(job_id, detail, True), media_type="application/json", headers={
+            "Content-Disposition": f'attachment; filename="archflow-{job_id}-debug.json"',
             "Cache-Control": "no-store",
         })
 
@@ -344,6 +372,11 @@ def job_routers(settings: Settings, projects: ProjectRepository,
     @internal.post("/{job_id}/progress", status_code=204)
     def progress(job_id: str, request: WorkerProgress, lease_id: Annotated[str, Header()]) -> Response:
         jobs.progress(job_id, lease_id, request)
+        return Response(status_code=204)
+
+    @internal.post("/{job_id}/diagnostics", status_code=204)
+    def diagnostic(job_id: str, request: WorkerDiagnostic, lease_id: Annotated[str, Header()]) -> Response:
+        jobs.diagnostic(job_id, lease_id, request)
         return Response(status_code=204)
 
     @internal.post("/{job_id}/checkpoint", response_model=GenerationJobDetail)

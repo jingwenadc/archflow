@@ -205,9 +205,27 @@ def test_api_worker_auth_disable_and_download(tmp_path):
     assert client.post("/api/v1/jobs", json=request | {"module": "drawing"}).status_code == 422
     job = client.post("/api/v1/jobs", json=request, headers={"Idempotency-Key": "same"}).json()
     assert client.get(f"/api/v1/jobs/{job['id']}/download").status_code == 409
-    assert client.post("/internal/jobs/claim", json={}, headers={"Authorization": "Bearer test-worker"}).json()["job"]["id"] == job["id"]
+    claim = client.post("/internal/jobs/claim", json={}, headers={"Authorization": "Bearer test-worker"}).json()
+    assert claim["job"]["id"] == job["id"]
+    diagnostic = {"event": "retry", "action": "plan", "attempt": 1, "unit_start": 1, "unit_end": 2,
+                  "outcome": "retrying", "call_id": "call-1", "model": "generate-model",
+                  "error_kind": "provider", "error_message": "stream_terminated", "retry_delay_ms": 1000,
+                  "retry_reason": "transient_provider"}
+    url = f"/internal/jobs/{job['id']}/diagnostics"
+    assert client.post(url, json=diagnostic).status_code == 401
+    assert client.post(url, json=diagnostic, headers={"Authorization": "Bearer test-worker", "Lease-Id": "wrong"}).status_code == 409
+    headers = {"Authorization": "Bearer test-worker", "Lease-Id": claim["lease_id"]}
+    assert client.post(url, json=diagnostic | {"provider_payload": "private prompt"}, headers=headers).status_code == 422
+    assert client.post(url, json=diagnostic, headers=headers).status_code == 204
     assert client.post(f"/api/v1/jobs/{job['id']}/cancel").status_code == 200
-    assert client.get(f"/api/v1/jobs/{job['id']}/download").json()["units"] == []
+    downloaded = client.get(f"/api/v1/jobs/{job['id']}/download").json()
+    assert downloaded["units"] == []
+    assert downloaded["model_calls"] == []
+    assert any(event["event_type"] == "cancel" for event in downloaded["workflow_events"])
+    assert downloaded["diagnostics"][0]["error_message"] == "stream_terminated"
+    assert downloaded["diagnostics"][0]["retry_delay_ms"] == 1000
+    assert "private prompt" not in str(downloaded)
+    assert all(event["event_type"] != "diagnostic" for event in client.get(f"/api/v1/jobs/{job['id']}/events").json())
     assert client.get(f"/api/v1/jobs/{job['id']}/units?limit=100").status_code == 422
     disabled = TestClient(create_app(Settings(upload_dir=tmp_path / "uploads", project_dir=tmp_path / "projects", database_path=tmp_path / "db.sqlite3", repository_root=ROOT, allowed_origins=())))
     assert disabled.post("/api/v1/jobs", json=request).status_code == 503

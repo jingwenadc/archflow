@@ -144,6 +144,7 @@ def test_csrf_login_admin_and_full_call_trace(tmp_path: Path) -> None:
     no_csrf.cookies.update(user.cookies)
     assert no_csrf.post("/api/v1/projects", json={"name": "Denied"}).status_code == 403
     assert user.get(f"/api/v1/jobs/{job['id']}/model-calls").status_code == 403
+    assert user.get(f"/api/v1/jobs/{job['id']}/debug-download").status_code == 403
 
     worker = client(tmp_path)
     headers = {"Authorization": "Bearer worker-test-token"}
@@ -176,6 +177,11 @@ def test_csrf_login_admin_and_full_call_trace(tmp_path: Path) -> None:
     trace = admin.get(f"/api/v1/jobs/{job['id']}/model-calls/{call_id}").json()
     assert trace["request"]["body"]["input"] == "full secret prompt"
     assert trace["response"]["message"]["output"] == "full secret answer"
+    debug = admin.get(f"/api/v1/jobs/{job['id']}/debug-download").json()
+    assert debug["model_calls"][0]["call_id"] == call_id
+    assert debug["model_io"][0]["trace_status"] == "complete"
+    assert debug["model_io"][0]["request"]["body"]["input"] == "full secret prompt"
+    assert debug["model_io"][0]["response"]["message"]["output"] == "full secret answer"
     conversation = user.post("/api/v1/conversations", json={
         "project_id": project["id"], "module": "concept", "title": "Private chat",
     }).json()

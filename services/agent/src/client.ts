@@ -1,4 +1,4 @@
-import type { ClaimedJob, GenerationJobDetail, ArtifactUnit, JobCheckpoint, UsageRecord, WorkerProgress, UnitBatch } from "./contracts.js";
+import type { ClaimedJob, GenerationJobDetail, ArtifactUnit, JobCheckpoint, UsageRecord, WorkerProgress, WorkerDiagnostic, UnitBatch } from "./contracts.js";
 import { WorkflowError } from "./errors.js";
 
 export class ApiClient {
@@ -47,6 +47,7 @@ export class ApiClient {
   }
   heartbeat(id: string, lease: string) { return this.request<void>(`/internal/jobs/${id}/heartbeat`, {}, lease); }
   progress(id: string, lease: string, body: WorkerProgress) { return this.request<void>(`/internal/jobs/${id}/progress`, body, lease); }
+  diagnostic(id: string, lease: string, body: WorkerDiagnostic) { return this.request<void>(`/internal/jobs/${id}/diagnostics`, body, lease); }
   checkpoint(id: string, lease: string, body: JobCheckpoint) {
     return this.request<GenerationJobDetail>(`/internal/jobs/${id}/checkpoint`, body, lease);
   }
