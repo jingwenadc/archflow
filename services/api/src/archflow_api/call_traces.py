@@ -1,7 +1,8 @@
 """Durable, compressed model I/O snapshots, separate from diagnostic exports.
 
 Trace files live under the project's persistent workspace and are never returned
-by ordinary job endpoints. A call ID is UUID validated before path construction.
+by ordinary job endpoints. Projects retain their existing directory IDs (including
+legacy slugs); job and call IDs are UUIDs. Callers authorize the job before access.
 """
 
 import gzip
@@ -17,11 +18,20 @@ class CallTraces:
         self.root = projects_root
 
     def folder(self, project_id: str, job_id: str, call_id: str) -> Path:
+        # Project IDs predate UUID-based project creation. Validate the path
+        # component without changing the ID used by the project registry.
+        if not project_id or project_id in {".", ".."} or any(char in project_id for char in ("/", "\\", "\x00")):
+            raise HTTPException(404, "Invalid model-call project path.")
         try:
-            project_id, job_id, call_id = (str(UUID(value)) for value in (project_id, job_id, call_id))
+            job_id, call_id = (str(UUID(value)) for value in (job_id, call_id))
         except ValueError as error:
-            raise HTTPException(404, "Model call not found.") from error
-        return self.root / project_id / "workspace" / "model-calls" / job_id / call_id
+            raise HTTPException(404, "Invalid model-call identifier.") from error
+        folder = self.root.resolve() / project_id / "workspace" / "model-calls" / job_id / call_id
+        # Reject symlinks below the configured root, including links to a
+        # different project's workspace, before reading or creating anything.
+        if folder.resolve() != folder:
+            raise HTTPException(404, "Invalid model-call storage path.")
+        return folder
 
     def save(self, project_id: str, job_id: str, call_id: str, phase: str, data: dict) -> None:
         if phase not in {"request", "response"}:

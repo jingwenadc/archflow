@@ -1,6 +1,8 @@
+import json
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from archflow_api.auth import AuthStore
@@ -133,10 +135,20 @@ def test_legacy_project_is_assigned_to_bootstrapped_admin(tmp_path: Path, monkey
     assert old_project in admin.get("/api/v1/projects").json(), "Password rotation keeps project ownership"
 
 
-def test_csrf_login_admin_and_full_call_trace(tmp_path: Path) -> None:
+@pytest.mark.parametrize("legacy_project_id", [None, "legacy-design-project"])
+def test_csrf_login_admin_and_full_call_trace(tmp_path: Path, legacy_project_id: str | None) -> None:
     user = client(tmp_path)
     signup(user, "alice")
     project = user.post("/api/v1/projects", json={"name": "Private"}).json()
+    if legacy_project_id:
+        # Older projects have stable slug IDs; new projects use UUIDs.
+        original_id = project["id"]
+        project["id"] = legacy_project_id
+        folder = tmp_path / "projects" / legacy_project_id
+        (tmp_path / "projects" / original_id).rename(folder)
+        (folder / "metadata.json").write_text(json.dumps(project), encoding="utf-8")
+        with AuthStore(tmp_path / "db.sqlite3", CODE, False).connect() as db:
+            db.execute("UPDATE project_members SET project_id=? WHERE project_id=?", (legacy_project_id, original_id))
     job = user.post("/api/v1/jobs", json={
         "project_id": project["id"], "module": "concept", "goal": "secret brief", "target_units": 1,
     }).json()
@@ -155,6 +167,12 @@ def test_csrf_login_admin_and_full_call_trace(tmp_path: Path) -> None:
     assert worker.post(f"/internal/jobs/{job['id']}/calls/reserve", json={
         "call_id": call_id, "model": "test-model", "total_tokens": 0,
     }, headers=headers | {"Lease-Id": lease}).status_code == 204
+    admin = client(tmp_path)
+    assert admin.post("/api/v1/auth/login", json={
+        "username": "owner", "password": "admin-password-long-123",
+    }).status_code == 200
+    incomplete = admin.get(f"/api/v1/jobs/{job['id']}/debug-download").json()
+    assert incomplete["model_io"] == [{"call_id": call_id, "trace_status": "missing"}]
     for phase, data in (("request", {"body": {"input": "full secret prompt"}}),
                         ("response", {"message": {"output": "full secret answer"}})):
         response = worker.post(f"/internal/jobs/{job['id']}/calls/{call_id}/trace",
@@ -167,10 +185,6 @@ def test_csrf_login_admin_and_full_call_trace(tmp_path: Path) -> None:
                            headers=headers | {"Lease-Id": lease}).status_code == 409
     assert worker.get(f"/api/v1/jobs/{job['id']}", headers=headers).status_code == 200
 
-    admin = client(tmp_path)
-    assert admin.post("/api/v1/auth/login", json={
-        "username": "owner", "password": "admin-password-long-123",
-    }).status_code == 200
     assert project in admin.get("/api/v1/projects").json()
     assert len(admin.get("/api/v1/admin/users").json()) == 2
     assert admin.get(f"/api/v1/jobs/{job['id']}/model-calls").json()[0]["call_id"] == call_id
