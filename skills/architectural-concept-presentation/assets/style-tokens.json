@@ -1,31 +1,80 @@
 {
+  "defaultCanvas": "screen169",
+  "note": "设计起点，可按项目调整；字号基于实际 PPT 物理尺寸，不能把像素当磅。",
   "canvasModes": {
-    "a3Report": {"width": 1414, "height": 1000, "ratio": 1.414, "label": "A3 方案文本"},
-    "screen169": {"width": 1600, "height": 900, "ratio": 1.777778, "label": "16:9 汇报演示"}
+    "screen169": {
+      "width": 1600,
+      "height": 900,
+      "widthInches": 13.333333,
+      "heightInches": 7.5,
+      "ratio": 1.777778,
+      "label": "16:9 方案提案"
+    },
+    "a3Report": {
+      "width": 1414,
+      "height": 1000,
+      "widthInches": 16.5354,
+      "heightInches": 11.6929,
+      "ratio": 1.414,
+      "label": "按需使用的 A3 横向打印"
+    }
   },
   "colors": {
     "ink": "#151719",
     "white": "#FFFFFF",
     "paper": "#F5F4EF",
     "lineGray": "#D7D9D8",
-    "muted": "#73787C",
-    "deepSlate": "#355B62",
-    "energyGreen": "#9CCB3B",
-    "civicRed": "#D82B23",
-    "brass": "#C79A34",
-    "campusBrick": "#A84D43",
-    "landscapeGreen": "#78A86D",
-    "analysisBlue": "#68A6CF"
+    "muted": "#595F63",
+    "accent": "#355B62"
   },
   "fonts": {
-    "cjkPreferred": ["Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC"],
-    "latinPreferred": ["Arial", "Aptos", "Helvetica"],
-    "displayNumeralOptional": ["Bodoni MT Black"]
+    "cjkPreferred": [
+      "Microsoft YaHei",
+      "PingFang SC",
+      "Noto Sans CJK SC"
+    ],
+    "latinPreferred": [
+      "Arial",
+      "Aptos",
+      "Helvetica"
+    ]
   },
   "typePt": {
-    "a3Report": {"cover": 34, "chapter": 54, "title": 16, "eyebrow": 8, "body": 10, "annotation": 7, "footer": 6},
-    "screen169": {"cover": 44, "chapter": 60, "title": 28, "eyebrow": 12, "body": 18, "annotation": 12, "footer": 9}
+    "screen169": {
+      "cover": 44,
+      "chapter": 52,
+      "title": 30,
+      "body": 20,
+      "annotation": 16,
+      "footer": 10
+    },
+    "a3Report": {
+      "cover": 44,
+      "chapter": 52,
+      "title": 30,
+      "body": 20,
+      "annotation": 16,
+      "footer": 10
+    }
   },
-  "grid": {"columns": 12, "gutterUnits": 1, "baselineUnits": 4},
-  "density": ["停顿", "解释", "审阅"]
+  "grid": {
+    "columns": 12,
+    "safeMarginPercent": 5
+  },
+  "copyGuidance": {
+    "bodyChineseChars": [
+      20,
+      60
+    ],
+    "reviewAboveChars": 90,
+    "shortLabels": [
+      2,
+      4
+    ]
+  },
+  "density": [
+    "停顿",
+    "解释",
+    "细节"
+  ]
 }

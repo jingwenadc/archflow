@@ -1,7 +1,7 @@
 interface:
-  display_name: "建筑概念方案 PPT"
-  short_description: "将任务书、图纸和效果图组织成可汇报、可审查的高品质建筑方案演示"
+  display_name: "方案设计 PPT"
+  short_description: "先用文字对齐提案，再创作图解、场景演示与漂亮精炼的方案设计 PPT"
   brand_color: "#355B62"
-  default_prompt: "使用 $architectural-concept-presentation 分阶段整理我的建筑方案；先提交整体骨架等待批准，不要直接生成幻灯片。"
+  default_prompt: "使用 $architectural-concept-presentation 制作有说服力的方案提案；先纯文字确认议程和逐页内容，再创作以图为主、文案精炼的漂亮 PPT。"
 policy:
   allow_implicit_invocation: true

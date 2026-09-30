@@ -27,7 +27,7 @@ from .storage import LocalFileStorage
 SKILLS = (
     SkillSummary(
         slug="architectural-concept-presentation",
-        name="建筑概念方案演示",
+        name="方案设计 PPT",
         module="方案设计",
         status="available",
         source_path="skills/architectural-concept-presentation",

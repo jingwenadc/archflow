@@ -1,35 +1,38 @@
 {
-  "project": "示例项目",
+  "project": "示例：便携灯具体验提案（未批准模板）",
+  "scope": "本次约定范围；全稿或指定章节",
   "structure": {
-    "approved": true,
-    "approvedAt": "2026-09-13T10:00:00+08:00",
-    "approvalNote": "用户明确批准整体骨架"
+    "approved": false,
+    "version": "01_整体框架/v01.md",
+    "approvedAt": null,
+    "approvalNote": "仅填写真实用户确认依据，不得复制示例作为批准"
   },
   "storyboard": {
-    "approved": true,
-    "approvedAt": "2026-09-13T11:00:00+08:00",
-    "approvalNote": "用户明确批准完整逐页故事板"
+    "approved": false,
+    "version": "02_逐页故事板/v01.md",
+    "approvedAt": null,
+    "approvalNote": "确认本次范围的实际逐页内容后才更新"
   },
   "sections": [
     {
       "id": "01",
-      "title": "项目解读",
-      "authorized": true,
+      "title": "设计方向",
+      "authorized": false,
       "generated": false,
       "approved": false,
       "revisionAuthorized": false,
       "selectedVersion": null,
-      "outputPath": "03_章节设计/01_项目解读"
+      "outputPath": "03_章节设计/01_设计方向"
     },
     {
       "id": "02",
-      "title": "设计构思",
-      "authorized": true,
+      "title": "使用体验",
+      "authorized": false,
       "generated": false,
       "approved": false,
       "revisionAuthorized": false,
       "selectedVersion": null,
-      "outputPath": "03_章节设计/02_设计构思"
+      "outputPath": "03_章节设计/02_使用体验"
     }
   ]
 }
