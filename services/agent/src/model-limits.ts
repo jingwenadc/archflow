@@ -1,8 +1,9 @@
 import { WorkflowError } from "./errors.js";
 
-// Official API model pages; GPT-6 Sol verified 2026-09-29. Provider aliases need an explicit override.
+// Official API model pages; GPT-6 Astra verified 2026-09-30. Provider aliases need an explicit override.
 // Source: https://developers.openai.com/api/docs/models/<model-id>
 const catalog: Record<string, { contextWindow: number; maxOutputTokens: number; reasoning: boolean }> = {
+  "gpt-6-astra": { contextWindow: 1_050_000, maxOutputTokens: 128_000, reasoning: true },
   "gpt-6-sol": { contextWindow: 1_050_000, maxOutputTokens: 128_000, reasoning: true },
   "gpt-5.5": { contextWindow: 1_050_000, maxOutputTokens: 128_000, reasoning: true },
   "gpt-5.4": { contextWindow: 1_050_000, maxOutputTokens: 128_000, reasoning: true },

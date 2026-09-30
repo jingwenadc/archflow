@@ -234,6 +234,9 @@ test("human feedback is phase- and location-bound in the real Pi request and can
 });
 
 test("model IDs resolve official caps; gateway overrides never exceed those caps", () => {
+  assert.equal(modelLimits("gpt-6-astra").contextWindow, 1_050_000);
+  assert.equal(modelLimits("gpt-6-astra").maxOutputTokens, 8192);
+  assert.equal(modelLimits("gpt-6-astra").reasoning, true);
   assert.equal(modelLimits("gpt-6-sol").contextWindow, 1_050_000);
   assert.equal(modelLimits("gpt-6-sol").maxOutputTokens, 8192);
   assert.equal(modelLimits("gpt-5.5").contextWindow, 1_050_000);

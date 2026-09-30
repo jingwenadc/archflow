@@ -26,8 +26,8 @@ services:
       ARCHFLOW_WORKER_TOKEN: ${ARCHFLOW_WORKER_TOKEN:-}
       ARCHFLOW_SIGNUP_CODE: ${ARCHFLOW_SIGNUP_CODE:-}
       ARCHFLOW_COOKIE_SECURE: ${ARCHFLOW_COOKIE_SECURE:-false}
-      ARCHFLOW_LLM_MODEL: ${ARCHFLOW_LLM_MODEL:-gpt-6-sol}
-      ARCHFLOW_REVIEW_MODEL: ${ARCHFLOW_REVIEW_MODEL:-gpt-6-sol}
+      ARCHFLOW_LLM_MODEL: ${ARCHFLOW_LLM_MODEL:-gpt-6-astra}
+      ARCHFLOW_REVIEW_MODEL: ${ARCHFLOW_REVIEW_MODEL:-gpt-6-astra}
     volumes:
       - ${ARCHFLOW_DATA_DIR:-./.local/deployment-data}:/data
     restart: unless-stopped
