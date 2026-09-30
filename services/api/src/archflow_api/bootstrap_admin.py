@@ -1,4 +1,4 @@
-"""One-time interactive administrator bootstrap; no password in env or shell history."""
+"""Interactive administrator bootstrap or password rotation; no secret in shell history."""
 
 import getpass
 
@@ -17,6 +17,14 @@ def main() -> None:
     confirmation = getpass.getpass("Confirm password: ")
     if password != confirmation:
         raise SystemExit("Passwords do not match.")
+    with store.connect() as db:
+        existing = db.execute("SELECT role FROM users WHERE username=?", (username.lower(),)).fetchone()
+    if existing:
+        if existing["role"] != "admin":
+            raise SystemExit("This username belongs to a regular account; choose another administrator name.")
+        store.rotate_admin_password(username, password)
+        print(f"Rotated administrator {username.lower()} password; previous sign-ins were revoked.")
+        return
     principal = store.create_user(username, password, "", role="admin")
     # Existing single-user projects become owned by the administrator, never
     # by the first ordinary account to sign up.

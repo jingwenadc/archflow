@@ -3,14 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "@/lib/api";
 import type { ArtifactKind, ArtifactUnit, CommentAnchor, GenerationJobDetail, GenerationJobRecord } from "@/lib/job-contracts";
-import { jobStatuses, orderedJobs, workflowState } from "@/lib/workflow";
+import { jobStatuses, orderedJobs, outputPhaseForJob, workflowState, workflowSteps, type OutputPhase } from "@/lib/workflow";
 import { useReviews } from "./review-controls";
 import { displayCitations } from "@/lib/source-citations";
 import { useCitationSources } from "@/lib/use-citation-sources";
 import { LoadingIcon } from "./icons";
 
 type ExportState = { status: string; requested: boolean; error: string | null; result: { page_count: number; format: string; missing_facts: number } | null };
-type OutputPhase = "outline" | "storyboard" | "draft" | "preview";
 const url = (path: string) => `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}${path}`;
 
 // Read-only preview state is deliberately independent of the current workflow.
@@ -47,7 +46,9 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
   const hasPreview = exported?.status === "ready" && !!exported.result;
   const completeContent = !!detail && detail.completed_units === detail.target_units && ["completed", "needs_review"].includes(detail.status);
   const exportAvailable = hasPreview || completeContent || !!(exported?.requested && ["queued", "processing", "failed"].includes(exported.status));
-  const activePhase: OutputPhase = selectedPhase ?? (hasPreview ? "preview" : hasDraft ? "draft" : (detail?.storyboard_units ?? current?.storyboard_units ?? 0) > 0 ? "storyboard" : "outline");
+  const activePhase: OutputPhase = selectedPhase ?? (detail ? outputPhaseForJob(detail) : current ? outputPhaseForJob(current) : "outline");
+  const taskState = detail ? workflowState(detail) : null;
+  const steps = detail ? workflowSteps(detail.module) : [];
   const kind = activePhase === "storyboard" ? "storyboard" : "draft";
   const savedDraftUnits = detail?.batches.reduce((count, batch) => count + (batch.draft_count > 0 || batch.status === "completed" ? batch.end_unit - batch.start_unit + 1 : 0), 0) ?? 0;
   const savedUnits = kind === "storyboard" ? detail?.storyboard_units ?? 0 : Math.max(detail?.completed_units ?? 0, savedDraftUnits);
@@ -58,11 +59,12 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
   const unitLabel = detail?.module === "concept" ? "页" : "章";
   const planningLabel = detail?.module === "bid" ? "逐章策划" : "逐页策划";
   const phaseOptions: { phase: OutputPhase; number: number; label: string; available: boolean }[] = [
-    { phase: "outline", number: 2, label: "提纲", available: !!detail?.outline },
-    { phase: "storyboard", number: 3, label: planningLabel, available: (detail?.storyboard_units ?? 0) > 0 },
-    { phase: "draft", number: 4, label: "生成与审校", available: hasDraft },
-    { phase: "preview", number: 5, label: "排版与下载", available: exportAvailable },
+    { phase: "outline", number: 2, label: steps[1] ?? "确认提纲", available: !!detail?.outline },
+    { phase: "storyboard", number: 3, label: steps[2] ?? planningLabel, available: (taskState?.index ?? -1) >= 2 || (detail?.storyboard_units ?? 0) > 0 },
+    { phase: "draft", number: 4, label: steps[3] ?? "生成与审校", available: (taskState?.index ?? -1) >= 3 || hasDraft },
+    { phase: "preview", number: 5, label: steps[4] ?? "排版与下载", available: (taskState?.index ?? -1) >= 4 || exportAvailable },
   ];
+  const viewingStep = phaseOptions.find(option => option.phase === activePhase)?.number;
   const pending = (selectedId ? reviews.records[selectedId]?.comments ?? [] : []).filter(item => !item.submitted_job_id);
   useEffect(() => { onAnnotationEditing(editing || saving); return () => onAnnotationEditing(false); }, [editing, saving, onAnnotationEditing]);
   useEffect(() => { if (selectedId) void reviews.load(selectedId); }, [selectedId, reviews.load]);
@@ -161,7 +163,9 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
               <li key={phase}><button type="button" aria-pressed={activePhase === phase} disabled={!available || editing}
                 onClick={() => { setSelectedPhase(phase); setFollowLatest(false); setPage(0); }}><span>{number}</span>{label}</button></li>)}
           </ol>
-          <p>{activePhase === "outline" ? "先确认章节结构与每部分的目标。" : activePhase === "storyboard" ? "查看每页拟展示的文字、图表或画面；确认后才开始排版。" : activePhase === "draft" ? "查看已生成的内容和审校状态，可对具体文字添加批注。" : "预览由可编辑文件转换而来，与下载文件保持一致。"}</p>
+          {taskState && selectedPhase && viewingStep !== taskState.index + 1 &&
+            <p role="status">任务当前在第 {taskState.index + 1} 步「{steps[taskState.index]}」；你正在查看第 {viewingStep} 步的已保存内容。</p>}
+          <p>{activePhase === "outline" ? "先确认章节结构与每部分的目标。" : activePhase === "storyboard" ? "查看每页拟展示的文字、图表或画面；确认后开始生成正文与审校。" : activePhase === "draft" ? "查看已生成的内容和审校状态，可对具体文字添加批注。" : "预览由可编辑文件转换而来，与下载文件保持一致。"}</p>
         </nav>}
         {live && activePhase !== "outline" && <div className="live-output-status" role="status" aria-live="polite"><LoadingIcon className="loading-icon" /><div><strong>V{version} {kind === "storyboard" ? "策划草稿" : "内容草稿"}持续更新中</strong><span>已保存 {savedUnits} / {detail.target_units} {unitLabel}；每批保存后显示，尚未完成审阅或排版。</span></div>{savedUnits > 5 && !followLatest && <button onClick={() => { setFollowLatest(true); setPage(latestGroup); }}>跟随最新</button>}</div>}
         {exported?.requested && ["queued", "processing"].includes(exported.status) && <p role="status">正在从可编辑文件生成页面预览…</p>}
@@ -174,6 +178,7 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
             {hasPreview && exported?.result && <><div className="generation-actions"><a href={url(`/api/v1/jobs/${selectedId}/export/${exported.result.format}`)}>下载 {exported.result.format.toUpperCase()}</a><a href={url(`/api/v1/jobs/${selectedId}/export/pdf`)}>下载 PDF</a></div><p className="generation-note">{exported.result.page_count} 页 · 可编辑审阅版{exported.result.missing_facts ? ` · ${exported.result.missing_facts} 条资料缺口已标注，不阻止审阅` : ""}</p><img className="artifact-page" src={url(`/api/v1/jobs/${selectedId}/preview/${Math.min(page + 1, exported.result.page_count)}`)} alt={`V${version} 文档第 ${page + 1} 页`} loading="lazy" /><div className="generation-actions"><button disabled={page === 0 || editing} onClick={() => setPage(value => value - 1)}>上一页</button><span>{page + 1} / {exported.result.page_count}</span><button disabled={page + 1 >= exported.result.page_count || editing} onClick={() => setPage(value => value + 1)}>下一页</button></div></>}
           </>}
           {(activePhase === "storyboard" || activePhase === "draft") && <>
+            {units.length === 0 && <p className="output-empty" role="status">{detail.status === "running" || detail.status === "queued" ? `${taskState?.label ?? "任务正在处理"}；这一阶段的内容保存后会显示在这里。` : "这一阶段尚无已保存的内容；可以切换上一步查看已有成果。"}</p>}
             {units.map(unit => <article className="generation-unit" key={unit.unit_index}>
               <p className="eyebrow">{activePhase === "storyboard" ? planningLabel : "正文草稿"} · {unit.unit_index}</p>
               <div data-review-kind={kind} data-review-index={unit.unit_index}>

@@ -5,7 +5,16 @@ import ts from "typescript";
 
 const source = await readFile(new URL("../lib/workflow.ts", import.meta.url), "utf8");
 const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
-const { requirementBrief, conversationTimeline, orderedJobs, workflowState, workflowSteps, failureHelp, isActiveJob } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+const { requirementBrief, conversationTimeline, orderedJobs, workflowState, workflowSteps, outputPhaseForJob, failureHelp, isActiveJob } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+
+test("output defaults to the actual workflow stage, even before that stage saves content", () => {
+  const base = { module: "concept", target_units: 40, completed_units: 0, storyboard_units: 40, outline: {} };
+  for (const [stage, status, phase] of [["planning", "waiting_outline", "outline"], ["storyboarding", "running", "storyboard"],
+    ["generating", "running", "draft"], ["generating", "needs_review", "draft"], ["final_review", "completed", "preview"]]) {
+    assert.equal(outputPhaseForJob({ ...base, stage, status }), phase);
+  }
+  assert.equal(outputPhaseForJob({ ...base, stage: "generating", status: "running", completed_units: 0 }), "draft");
+});
 
 test("review revisions wait for human approval without a working spinner", () => {
   const job = { module: "concept", stage: "final_review", status: "waiting_review", target_units: 40, completed_units: 40 };

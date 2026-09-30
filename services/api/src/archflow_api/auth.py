@@ -120,6 +120,21 @@ class AuthStore:
         finally:
             db.close()
 
+    def has_admin(self) -> bool:
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM users WHERE role='admin' LIMIT 1").fetchone() is not None
+
+    def rotate_admin_password(self, username: str, password: str) -> None:
+        """Local recovery: keep the administrator's identity, revoke old sessions."""
+        password_hash = self.hash_password(password)
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT id,role FROM users WHERE username=?", (username.strip().lower(),)).fetchone()
+            if row is None or row["role"] != "admin":
+                raise HTTPException(404, "Administrator not found.")
+            db.execute("UPDATE users SET password_hash=? WHERE id=?", (password_hash, row["id"]))
+            db.execute("DELETE FROM user_sessions WHERE user_id=?", (row["id"],))
+
     @staticmethod
     def hash_password(password: str) -> str:
         if not 12 <= len(password) <= 256:

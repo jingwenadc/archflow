@@ -131,6 +131,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def signup(request: Registration, response: Response) -> dict:
         if not resolved.signup_code:
             raise HTTPException(503, "Individual accounts are not configured.")
+        if not auth.has_admin():
+            raise HTTPException(503, "Bootstrap an administrator before allowing registration.")
         principal = auth.create_user(request.username, request.password, request.signup_code)
         auth.issue_session(response, principal)
         return {"id": principal.id, "username": principal.username, "role": principal.role}

@@ -14,12 +14,16 @@ CODE = "a-long-random-signup-secret"
 
 
 def client(tmp_path: Path) -> TestClient:
-    return TestClient(create_app(Settings(
+    api = TestClient(create_app(Settings(
         upload_dir=tmp_path / "uploads", project_dir=tmp_path / "projects",
         case_upload_dir=tmp_path / "cases", database_path=tmp_path / "db.sqlite3",
         repository_root=ROOT, allowed_origins=("http://localhost:3000",),
         signup_code=CODE, agent_enabled=True, worker_token="worker-test-token",
     )))
+    store = AuthStore(tmp_path / "db.sqlite3", CODE, False)
+    if not store.has_admin():
+        store.create_user("owner", "admin-password-long-123", "", role="admin")
+    return api
 
 
 def signup(api: TestClient, username: str) -> None:
@@ -81,6 +85,19 @@ def test_signup_code_is_required_and_attempts_are_bounded(tmp_path: Path) -> Non
     assert api.post("/api/v1/auth/signup", json=payload | {"signup_code": CODE}).status_code == 429
 
 
+def test_registration_waits_for_admin_bootstrap(tmp_path: Path) -> None:
+    api = TestClient(create_app(Settings(
+        upload_dir=tmp_path / "uploads", project_dir=tmp_path / "projects",
+        case_upload_dir=tmp_path / "cases", database_path=tmp_path / "db.sqlite3",
+        repository_root=ROOT, allowed_origins=("http://localhost:3000",), signup_code=CODE,
+    )))
+    response = api.post("/api/v1/auth/signup", json={
+        "username": "alice", "password": "correct-horse-battery-456", "signup_code": CODE,
+    })
+    assert response.status_code == 503
+    assert AuthStore(tmp_path / "db.sqlite3", CODE, False).has_admin() is False
+
+
 def test_legacy_project_is_assigned_to_bootstrapped_admin(tmp_path: Path, monkeypatch) -> None:
     legacy = TestClient(create_app(Settings(
         upload_dir=tmp_path / "uploads", project_dir=tmp_path / "projects",
@@ -92,7 +109,8 @@ def test_legacy_project_is_assigned_to_bootstrapped_admin(tmp_path: Path, monkey
     monkeypatch.setenv("ARCHFLOW_DATABASE_PATH", str(tmp_path / "db.sqlite3"))
     monkeypatch.setenv("ARCHFLOW_PROJECT_DIR", str(tmp_path / "projects"))
     monkeypatch.setattr("builtins.input", lambda _prompt: "owner")
-    monkeypatch.setattr("getpass.getpass", lambda _prompt: "admin-password-long-123")
+    passwords = iter(["admin-password-long-123"] * 2 + ["new-admin-password-long-456"] * 2)
+    monkeypatch.setattr("getpass.getpass", lambda _prompt: next(passwords))
     bootstrap_admin.main()
     admin = client(tmp_path)
     assert admin.post("/api/v1/auth/login", json={
@@ -104,6 +122,15 @@ def test_legacy_project_is_assigned_to_bootstrapped_admin(tmp_path: Path, monkey
     ordinary = client(tmp_path)
     signup(ordinary, "new-user")
     assert ordinary.get("/api/v1/projects").json() == []
+    bootstrap_admin.main()
+    assert admin.get("/api/v1/projects").status_code == 401, "Rotating the password revokes existing admin sessions"
+    assert admin.post("/api/v1/auth/login", json={
+        "username": "owner", "password": "admin-password-long-123",
+    }).status_code == 401
+    assert admin.post("/api/v1/auth/login", json={
+        "username": "owner", "password": "new-admin-password-long-456",
+    }).status_code == 200
+    assert old_project in admin.get("/api/v1/projects").json(), "Password rotation keeps project ownership"
 
 
 def test_csrf_login_admin_and_full_call_trace(tmp_path: Path) -> None:
@@ -139,8 +166,6 @@ def test_csrf_login_admin_and_full_call_trace(tmp_path: Path) -> None:
                            headers=headers | {"Lease-Id": lease}).status_code == 409
     assert worker.get(f"/api/v1/jobs/{job['id']}", headers=headers).status_code == 200
 
-    store = AuthStore(tmp_path / "db.sqlite3", CODE, False)
-    store.create_user("owner", "admin-password-long-123", "", role="admin")
     admin = client(tmp_path)
     assert admin.post("/api/v1/auth/login", json={
         "username": "owner", "password": "admin-password-long-123",
@@ -160,3 +185,12 @@ def test_csrf_login_admin_and_full_call_trace(tmp_path: Path) -> None:
     admin_messages = admin.get(f"/api/v1/admin/conversations/{conversation['id']}/messages")
     assert admin_messages.status_code == 200
     assert admin_messages.json()[0]["content"] == "private conversation text"
+    second_user = client(tmp_path)
+    signup(second_user, "bob")
+    second_project = second_user.post("/api/v1/projects", json={"name": "Another private project"}).json()
+    second_conversation = second_user.post("/api/v1/conversations", json={
+        "project_id": second_project["id"], "module": "bid", "title": "Private bid chat",
+    }).json()
+    assert second_user.post(f"/api/v1/conversations/{second_conversation['id']}/messages", json={"content": "second private brief"}).status_code == 201
+    assert len(admin.get("/api/v1/projects").json()) == 2
+    assert admin.get(f"/api/v1/admin/conversations/{second_conversation['id']}/messages").json()[0]["content"] == "second private brief"

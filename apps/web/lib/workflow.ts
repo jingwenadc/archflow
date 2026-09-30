@@ -10,6 +10,15 @@ export const jobStatuses: Record<string, string> = {
 
 export const workflowSteps = (module: GenerationJobRecord["module"]) => ["整理资料与提纲", "确认提纲", module === "concept" ? "逐页策划" : "逐章策划", "生成与审校", "排版与下载"];
 
+export type OutputPhase = "outline" | "storyboard" | "draft" | "preview";
+
+// The output pane follows the same job stage as the conversation by default.
+// A reader may explicitly select an earlier artifact without changing the job.
+export function outputPhaseForJob(job: GenerationJobRecord & { outline?: unknown }): OutputPhase {
+  const step = workflowState(job).index;
+  return step >= 4 ? "preview" : step === 3 ? "draft" : step === 2 ? "storyboard" : "outline";
+}
+
 export function workflowState(job: GenerationJobRecord & { progress?: string | null; outline?: unknown }) {
   const index = job.status === "completed" ? 4 : job.status === "waiting_outline" || (job.stage === "planning" && !!job.outline) ? 1 : job.stage === "planning" ? 0
     : job.stage === "storyboarding" ? 2 : 3;
