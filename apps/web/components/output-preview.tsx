@@ -161,6 +161,7 @@ export function OutputPreview({ jobs, selectedId, onSelect, onOutputAvailable, o
           <p>{activePhase === "storyboard" ? "先确定每页讲什么、依据什么资料；这是内部策划，不会直接排进交付文件。" : activePhase === "draft" ? "再写给读者看的正文；审校后用于可编辑文件。" : "最后检查实际排版并下载可编辑文件。"}</p>
         </nav>}
         {exported?.requested && ["queued", "processing"].includes(exported.status) && <p role="status">正在排版和渲染可编辑文件…</p>}
+        {exported?.status === "incomplete" && ["completed", "needs_review"].includes(detail.status) && <p role="status" className="generation-note">{exported.error}</p>}
         {exported?.status === "failed" && <div role="alert"><p>{exported.error}</p><button onClick={() => void requestExport(`/api/v1/jobs/${selectedId}/export/retry`)}>重试排版</button></div>}
         {["completed", "needs_review"].includes(detail.status) && exported && !exported.requested && <button onClick={() => void requestExport(`/api/v1/jobs/${selectedId}/export`)}>排版为可编辑审阅文件</button>}
         {exported?.status === "ready" && exported.result && <>

@@ -14,6 +14,7 @@ export type ArtifactUnit = {
   layout?: "cover" | "text" | "image" | "table";
   image_id?: string | null;
   table?: Array<Array<string>>;
+  slide?: SlideDesign | null;
 };
 
 export type ClaimedJob = {
@@ -207,6 +208,34 @@ export type SkillSnapshot = {
   description: string;
   sha256: string;
   files: Record<string, string>;
+  images?: Record<string, string>;
+};
+
+export type SlideDesign = {
+  background?: string;
+  elements: Array<SlideElement>;
+};
+
+export type SlideElement = {
+  kind: "text" | "image" | "rect" | "ellipse" | "line" | "table";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  text?: string | null;
+  image_id?: string | null;
+  rows?: Array<Array<string>>;
+  fill?: string | null;
+  stroke?: string | null;
+  header_fill?: string | null;
+  header_color?: string | null;
+  alternate_fill?: string | null;
+  color?: string;
+  font_size?: number;
+  bold?: boolean;
+  align?: "left" | "center" | "right";
+  valign?: "top" | "mid" | "bottom";
+  fit?: "contain" | "cover";
 };
 
 export type UnitBatch = {
@@ -220,8 +249,8 @@ export type UsageRecord = {
 };
 
 export type WorkerProgress = {
-  step: "skills" | "materials" | "planning" | "storyboarding" | "generating" | "reviewing" | "compacting" | "continuing";
+  step: "skills" | "materials" | "planning" | "storyboarding" | "generating" | "previewing" | "reviewing" | "compacting" | "continuing";
   memory?: AgentMemory | null;
 };
 
-export const schemas = {"DocumentPlan": {"properties": {"skill_slug": {"maxLength": 100, "minLength": 1, "type": "string"}, "summary": {"description": "Project and design strategy summary. Scope is declared separately in target_units; do not propose a different length or narrate workflow/approval instructions.", "maxLength": 4000, "minLength": 1, "type": "string"}, "sections": {"items": {"properties": {"title": {"maxLength": 200, "minLength": 1, "type": "string"}, "start_unit": {"description": "Inclusive actual slide/chapter index, not the outline section number.", "maximum": 500, "minimum": 1, "type": "integer"}, "end_unit": {"description": "Inclusive actual slide/chapter index; a section may span many units.", "maximum": 500, "minimum": 1, "type": "integer"}, "objective": {"maxLength": 2000, "minLength": 1, "type": "string"}}, "required": ["title", "start_unit", "end_unit", "objective"], "type": "object"}, "maxItems": 30, "minItems": 1, "type": "array"}, "target_units": {"description": "Must equal the user's confirmed deliverable length, not len(sections).", "maximum": 500, "minimum": 1, "type": "integer"}}, "required": ["skill_slug", "summary", "sections", "target_units"], "type": "object"}, "UnitBatch": {"properties": {"units": {"items": {"properties": {"unit_index": {"maximum": 500, "minimum": 1, "type": "integer"}, "title": {"maxLength": 200, "minLength": 1, "type": "string"}, "body": {"maxLength": 12000, "minLength": 1, "type": "string"}, "evidence": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}, "missing_facts": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}, "layout": {"default": "text", "enum": ["cover", "text", "image", "table"], "type": "string"}, "image_id": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null}, "table": {"items": {"items": {"type": "string"}, "type": "array"}, "maxItems": 15, "type": "array"}}, "required": ["unit_index", "title", "body", "evidence", "missing_facts"], "type": "object"}, "maxItems": 10, "minItems": 1, "type": "array"}}, "required": ["units"], "type": "object"}, "ReviewResult": {"properties": {"passed": {"type": "boolean"}, "summary": {"maxLength": 4000, "minLength": 1, "type": "string"}, "issues": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}}, "required": ["passed", "summary", "issues"], "type": "object"}};
+export const schemas = {"DocumentPlan": {"properties": {"skill_slug": {"maxLength": 100, "minLength": 1, "type": "string"}, "summary": {"description": "Project and design strategy summary. Scope is declared separately in target_units; do not propose a different length or narrate workflow/approval instructions.", "maxLength": 4000, "minLength": 1, "type": "string"}, "sections": {"items": {"properties": {"title": {"maxLength": 200, "minLength": 1, "type": "string"}, "start_unit": {"description": "Inclusive actual slide/chapter index, not the outline section number.", "maximum": 500, "minimum": 1, "type": "integer"}, "end_unit": {"description": "Inclusive actual slide/chapter index; a section may span many units.", "maximum": 500, "minimum": 1, "type": "integer"}, "objective": {"maxLength": 2000, "minLength": 1, "type": "string"}}, "required": ["title", "start_unit", "end_unit", "objective"], "type": "object"}, "maxItems": 30, "minItems": 1, "type": "array"}, "target_units": {"description": "Must equal the user's confirmed deliverable length, not len(sections).", "maximum": 500, "minimum": 1, "type": "integer"}}, "required": ["skill_slug", "summary", "sections", "target_units"], "type": "object"}, "UnitBatch": {"properties": {"units": {"items": {"properties": {"unit_index": {"maximum": 500, "minimum": 1, "type": "integer"}, "title": {"maxLength": 200, "minLength": 1, "type": "string"}, "body": {"maxLength": 12000, "minLength": 1, "type": "string"}, "evidence": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}, "missing_facts": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}, "layout": {"default": "text", "enum": ["cover", "text", "image", "table"], "type": "string"}, "image_id": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null}, "table": {"items": {"items": {"type": "string"}, "type": "array"}, "maxItems": 15, "type": "array"}, "slide": {"anyOf": [{"properties": {"background": {"default": "FFFFFF", "pattern": "^[0-9A-Fa-f]{6}$", "type": "string"}, "elements": {"items": {"description": "Editable PowerPoint object on a 13.333 × 7.5 inch canvas.", "properties": {"kind": {"enum": ["text", "image", "rect", "ellipse", "line", "table"], "type": "string"}, "x": {"maximum": 13.333, "minimum": 0, "type": "number"}, "y": {"maximum": 7.5, "minimum": 0, "type": "number"}, "w": {"maximum": 13.333, "minimum": 0, "type": "number"}, "h": {"maximum": 7.5, "minimum": 0, "type": "number"}, "text": {"anyOf": [{"maxLength": 1200, "type": "string"}, {"type": "null"}], "default": null}, "image_id": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null}, "rows": {"items": {"items": {"type": "string"}, "type": "array"}, "maxItems": 10, "type": "array"}, "fill": {"anyOf": [{"pattern": "^[0-9A-Fa-f]{6}$", "type": "string"}, {"type": "null"}], "default": null}, "stroke": {"anyOf": [{"pattern": "^[0-9A-Fa-f]{6}$", "type": "string"}, {"type": "null"}], "default": null}, "header_fill": {"anyOf": [{"pattern": "^[0-9A-Fa-f]{6}$", "type": "string"}, {"type": "null"}], "default": null}, "header_color": {"anyOf": [{"pattern": "^[0-9A-Fa-f]{6}$", "type": "string"}, {"type": "null"}], "default": null}, "alternate_fill": {"anyOf": [{"pattern": "^[0-9A-Fa-f]{6}$", "type": "string"}, {"type": "null"}], "default": null}, "color": {"default": "152D38", "pattern": "^[0-9A-Fa-f]{6}$", "type": "string"}, "font_size": {"default": 20, "maximum": 72, "minimum": 12, "type": "integer"}, "bold": {"default": false, "type": "boolean"}, "align": {"default": "left", "enum": ["left", "center", "right"], "type": "string"}, "valign": {"default": "top", "enum": ["top", "mid", "bottom"], "type": "string"}, "fit": {"default": "contain", "enum": ["contain", "cover"], "type": "string"}}, "required": ["kind", "x", "y", "w", "h"], "type": "object"}, "maxItems": 30, "minItems": 1, "type": "array"}}, "required": ["elements"], "type": "object"}, {"type": "null"}], "default": null}}, "required": ["unit_index", "title", "body", "evidence", "missing_facts"], "type": "object"}, "maxItems": 10, "minItems": 1, "type": "array"}}, "required": ["units"], "type": "object"}, "ReviewResult": {"properties": {"passed": {"type": "boolean"}, "summary": {"maxLength": 4000, "minLength": 1, "type": "string"}, "issues": {"items": {"type": "string"}, "maxItems": 30, "type": "array"}}, "required": ["passed", "summary", "issues"], "type": "object"}};

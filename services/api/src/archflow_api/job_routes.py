@@ -1,8 +1,10 @@
 import secrets
 import base64
 import json
+import re
+import shutil
 from typing import Annotated, Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse, FileResponse
@@ -13,7 +15,7 @@ from .job_repository import JobRepository, snapshot_skills
 from .models import (
     ArtifactUnit, ClaimedJob, GenerationJobCreate, GenerationJobDetail,
     GenerationJobEvent, GenerationJobRecord, JobCheckpoint, UsageRecord, WorkerProgress, RunLimits,
-    ReviewComment, ReviewCommentCreate, ReviewSubmission, SkillSnapshot,
+    ReviewComment, ReviewCommentCreate, ReviewSubmission, SkillSnapshot, UnitBatch,
 )
 from .project_repository import ProjectRepository
 from .materials import DocumentRepository, collect_materials
@@ -159,7 +161,11 @@ def job_routers(settings: Settings, projects: ProjectRepository,
 
     @public.get("/{job_id}/export")
     def get_export(job_id: str):
-        jobs.detail(job_id)
+        detail = jobs.detail(job_id)
+        completed = len(jobs.units(job_id, "draft", 0, 500))
+        if completed != detail.target_units:
+            return {"status": "incomplete", "requested": True, "result": None,
+                "error": f"已保存 {completed} / {detail.target_units} 页；完成所有页面后才能导出完整文件。"}
         return export_status(job_id, documents)
 
     @public.post("/{job_id}/export")
@@ -168,18 +174,24 @@ def job_routers(settings: Settings, projects: ProjectRepository,
 
     @public.post("/{job_id}/export/retry")
     def retry_export(job_id: str):
-        jobs.detail(job_id)
+        detail = jobs.detail(job_id)
+        if len(jobs.units(job_id, "draft", 0, 500)) != detail.target_units:
+            raise HTTPException(409, "页面未全部完成，不能重试导出。")
         documents.retry(f"export:{job_id}")
         return export_status(job_id, documents)
 
     @public.get("/{job_id}/export/{format}")
     def export_download(job_id: str, format: Literal["pptx", "docx", "pdf"]):
-        jobs.detail(job_id)
+        detail = jobs.detail(job_id)
+        if len(jobs.units(job_id, "draft", 0, 500)) != detail.target_units:
+            raise HTTPException(409, "此版本尚未完成全部内容，不能下载为完整文件。")
         return FileResponse(exported_file(job_id, f"archflow.{format}", documents), filename=f"archflow-{job_id}.{format}")
 
     @public.get("/{job_id}/preview/{page}")
     def preview(job_id: str, page: int):
-        jobs.detail(job_id)
+        detail = jobs.detail(job_id)
+        if len(jobs.units(job_id, "draft", 0, 500)) != detail.target_units:
+            raise HTTPException(409, "此版本尚未完成全部内容，不能显示旧的部分导出预览。")
         if page < 1 or page > 2000:
             raise HTTPException(404, "页码不存在。")
         return FileResponse(exported_file(job_id, f"page-{page}.jpg", documents), media_type="image/jpeg")
@@ -228,6 +240,74 @@ def job_routers(settings: Settings, projects: ProjectRepository,
             raise HTTPException(413, "图片超过模型读取上限。")
         return {"data": base64.b64encode(path.read_bytes()).decode(), "mime_type": "image/jpeg"}
 
+    @internal.get("/{job_id}/skill-images")
+    def skill_image(job_id: str, path: str, lease_id: Annotated[str, Header()]):
+        match = re.fullmatch(r"/skills/([^/]+)/(?P<asset>assets/[^/]+\.(?:jpg|jpeg|png))", path)
+        if not match:
+            raise HTTPException(404, "Skill visual not found.")
+        with jobs.connect() as db:
+            row = jobs.leased(db, job_id, lease_id)
+            snapshot = next((skill for skill in json.loads(row["skills"]) if skill["slug"] == match.group(1)), None)
+            digest = snapshot and snapshot.get("images", {}).get(match.group("asset"))
+            asset = db.execute("SELECT data FROM skill_assets WHERE digest=?", (digest,)).fetchone() if digest else None
+        if asset is None:
+            raise HTTPException(404, "Skill visual not found in this frozen job snapshot.")
+        return {"data": base64.b64encode(asset[0]).decode(),
+                "mime_type": "image/png" if path.endswith(".png") else "image/jpeg"}
+
+    @internal.post("/{job_id}/slide-previews", status_code=202)
+    def start_slide_preview(job_id: str, request: UnitBatch, lease_id: Annotated[str, Header()]):
+        with jobs.connect() as db:
+            row = jobs.leased(db, job_id, lease_id)
+        if row["module"] != "concept" or row["stage"] != "generating":
+            raise HTTPException(409, "Only active concept drafts can be previewed.")
+        active = next((batch for batch in jobs.detail(job_id).batches if batch.status != "completed"), None)
+        if active is None or [unit.unit_index for unit in request.units] != list(range(active.start_unit, active.end_unit + 1)):
+            raise HTTPException(422, "Preview must contain the complete active batch in order.")
+        if active.status != "draft" and any(unit.slide is None for unit in request.units):
+            raise HTTPException(422, "Every previewed concept page needs an editable slide composition.")
+        allowed_images = {asset["id"] for doc in documents.sources(job_id) for asset in doc["assets"]}
+        if any(element.image_id not in allowed_images for unit in request.units for element in unit.slide.elements if element.image_id):
+            raise HTTPException(422, "Image does not belong to this project's frozen materials.")
+        preview_id = str(uuid4())
+        folder = projects.root / row["project_id"] / "workspace" / "previews" / job_id / preview_id
+        folder.mkdir(parents=True)
+        (folder / "input.json").write_text(json.dumps({"module": "concept", "purpose": "agent-preview", "title": row["goal"][:80],
+            "units": [unit.model_dump() for unit in request.units], "sources": documents.sources(job_id)}, ensure_ascii=False), "utf-8")
+        documents.queue(f"preview:{preview_id}", "preview", row["project_id"], folder)
+        return {"preview_id": preview_id}
+
+    @internal.get("/{job_id}/slide-previews/{preview_id}")
+    def slide_preview(job_id: str, preview_id: str, lease_id: Annotated[str, Header()]):
+        with jobs.connect() as db:
+            row = jobs.leased(db, job_id, lease_id)
+        try:
+            preview_id = str(UUID(preview_id))
+        except ValueError:
+            raise HTTPException(404, "Preview not found.")
+        folder = projects.root / row["project_id"] / "workspace" / "previews" / job_id / preview_id
+        work_id = f"preview:{preview_id}"
+        work = documents.status(work_id)
+        if work.get("path") != str(folder) or work.get("kind") != "preview":
+            raise HTTPException(404, "Preview not found.")
+        if work["status"] in {"queued", "processing"}:
+            return {"status": work["status"]}
+        if work["status"] == "failed":
+            result = {"status": "failed", "error": work["error"]}
+            shutil.rmtree(folder, ignore_errors=True)
+            with documents.connect() as db:
+                db.execute("DELETE FROM document_work WHERE id=? AND kind='preview'", (work_id,))
+            return result
+        images = sorted(folder.glob("page-*.jpg"), key=lambda path: int(path.stem.split("-")[-1]))
+        if len(images) != work["result"]["page_count"] or len(images) > 10:
+            raise HTTPException(500, "Rendered preview is incomplete.")
+        result = {"status": "ready", "images": [{"data": base64.b64encode(image.read_bytes()).decode(),
+            "mime_type": "image/jpeg"} for image in images]}
+        shutil.rmtree(folder)
+        with documents.connect() as db:
+            db.execute("DELETE FROM document_work WHERE id=? AND kind='preview'", (work_id,))
+        return result
+
     @internal.get("/{job_id}/review-units", response_model=list[ArtifactUnit])
     def review_units(job_id: str, kind: Literal["storyboard", "draft"], offset: int = Query(0, ge=0), limit: int = Query(5, ge=1, le=5)):
         detail = jobs.detail(job_id)
@@ -249,7 +329,7 @@ def job_routers(settings: Settings, projects: ProjectRepository,
     def checkpoint(job_id: str, request: JobCheckpoint,
                    lease_id: Annotated[str, Header()]) -> GenerationJobDetail:
         detail = jobs.checkpoint(job_id, lease_id, request)
-        if detail.status in {"completed", "needs_review"} and jobs.units(job_id, "draft", 0, 1):
+        if detail.status in {"completed", "needs_review"} and len(jobs.units(job_id, "draft", 0, 500)) == detail.target_units:
             queue_export(detail, jobs, projects, documents)
         return detail
 

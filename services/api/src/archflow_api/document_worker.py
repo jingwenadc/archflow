@@ -152,7 +152,7 @@ def render_document(folder: Path) -> dict:
         page_count = len(PdfReader(pdf).pages)
         if extension == "pptx" and page_count != len(units):
             raise ValueError("渲染页数与提纲不一致。")
-        command(["/usr/bin/pdftoppm", "-jpeg", "-scale-to", "1400", str(pdf), str(temp / "preview")], timeout=600)
+        command(["/usr/bin/pdftoppm", "-jpeg", "-scale-to", "1100" if request.get("purpose") == "agent-preview" else "1400", str(pdf), str(temp / "preview")], timeout=600)
         import shutil
         shutil.copy2(output, folder / output.name)
         shutil.copy2(pdf, folder / "archflow.pdf")

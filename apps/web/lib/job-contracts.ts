@@ -14,6 +14,7 @@ export type ArtifactUnit = {
   layout?: "cover" | "text" | "image" | "table";
   image_id?: string | null;
   table?: Array<Array<string>>;
+  slide?: SlideDesign | null;
 };
 
 export type ClaimedJob = {
@@ -207,6 +208,34 @@ export type SkillSnapshot = {
   description: string;
   sha256: string;
   files: Record<string, string>;
+  images?: Record<string, string>;
+};
+
+export type SlideDesign = {
+  background?: string;
+  elements: Array<SlideElement>;
+};
+
+export type SlideElement = {
+  kind: "text" | "image" | "rect" | "ellipse" | "line" | "table";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  text?: string | null;
+  image_id?: string | null;
+  rows?: Array<Array<string>>;
+  fill?: string | null;
+  stroke?: string | null;
+  header_fill?: string | null;
+  header_color?: string | null;
+  alternate_fill?: string | null;
+  color?: string;
+  font_size?: number;
+  bold?: boolean;
+  align?: "left" | "center" | "right";
+  valign?: "top" | "mid" | "bottom";
+  fit?: "contain" | "cover";
 };
 
 export type UnitBatch = {
@@ -220,7 +249,7 @@ export type UsageRecord = {
 };
 
 export type WorkerProgress = {
-  step: "skills" | "materials" | "planning" | "storyboarding" | "generating" | "reviewing" | "compacting" | "continuing";
+  step: "skills" | "materials" | "planning" | "storyboarding" | "generating" | "previewing" | "reviewing" | "compacting" | "continuing";
   memory?: AgentMemory | null;
 };
 

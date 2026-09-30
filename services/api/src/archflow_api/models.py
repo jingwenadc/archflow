@@ -195,6 +195,52 @@ class DocumentPlan(BaseModel):
     target_units: int = Field(ge=1, le=500, description="Must equal the user's confirmed deliverable length, not len(sections).")
 
 
+class SlideElement(BaseModel):
+    """Editable PowerPoint object on a 13.333 × 7.5 inch canvas."""
+
+    kind: Literal["text", "image", "rect", "ellipse", "line", "table"]
+    x: float = Field(ge=0, le=13.333)
+    y: float = Field(ge=0, le=7.5)
+    w: float = Field(ge=0, le=13.333)
+    h: float = Field(ge=0, le=7.5)
+    text: str | None = Field(default=None, max_length=1200)
+    image_id: str | None = None
+    rows: list[list[str]] = Field(default_factory=list, max_length=10)
+    fill: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{6}$")
+    stroke: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{6}$")
+    header_fill: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{6}$")
+    header_color: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{6}$")
+    alternate_fill: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{6}$")
+    color: str = Field(default="152D38", pattern=r"^[0-9A-Fa-f]{6}$")
+    font_size: int = Field(default=20, ge=12, le=72)
+    bold: bool = False
+    align: Literal["left", "center", "right"] = "left"
+    valign: Literal["top", "mid", "bottom"] = "top"
+    fit: Literal["contain", "cover"] = "contain"
+
+    @model_validator(mode="after")
+    def validate_element(self):
+        if self.x + self.w > 13.334 or self.y + self.h > 7.501:
+            raise ValueError("Slide element extends beyond the 16:9 canvas.")
+        if self.kind == "line":
+            if self.w == self.h == 0:
+                raise ValueError("A line needs a nonzero length.")
+        elif self.w < 0.05 or self.h < 0.05:
+            raise ValueError("Slide elements need a visible width and height.")
+        if self.kind == "text" and not (self.text or "").strip():
+            raise ValueError("Text elements need content.")
+        if self.kind == "image" and not self.image_id:
+            raise ValueError("Image elements need a frozen source asset ID.")
+        if self.kind == "table" and (not self.rows or any(not row or len(row) > 6 for row in self.rows)):
+            raise ValueError("Tables need 1–10 rows and at most 6 columns.")
+        return self
+
+
+class SlideDesign(BaseModel):
+    background: str = Field(default="FFFFFF", pattern=r"^[0-9A-Fa-f]{6}$")
+    elements: list[SlideElement] = Field(min_length=1, max_length=30)
+
+
 class ArtifactUnit(BaseModel):
     unit_index: int = Field(ge=1, le=500)
     title: str = Field(min_length=1, max_length=200)
@@ -204,6 +250,7 @@ class ArtifactUnit(BaseModel):
     layout: Literal["cover", "text", "image", "table"] = "text"
     image_id: str | None = None
     table: list[list[str]] = Field(default_factory=list, max_length=15)
+    slide: SlideDesign | None = None
 
 
 ArtifactKind = Literal["outline", "storyboard", "draft"]
@@ -282,7 +329,7 @@ class AgentMemory(BaseModel):
 
 
 class WorkerProgress(BaseModel):
-    step: Literal["skills", "materials", "planning", "storyboarding", "generating", "reviewing", "compacting", "continuing"]
+    step: Literal["skills", "materials", "planning", "storyboarding", "generating", "previewing", "reviewing", "compacting", "continuing"]
     memory: AgentMemory | None = None
 
 
@@ -346,6 +393,7 @@ class SkillSnapshot(BaseModel):
     description: str
     sha256: str
     files: dict[str, str]
+    images: dict[str, str] = Field(default_factory=dict, description="Frozen image atlases; stored by content hash after job creation.")
 
 
 class ClaimedJob(BaseModel):

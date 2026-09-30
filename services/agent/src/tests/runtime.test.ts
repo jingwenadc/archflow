@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { ApiClient } from "../client.js";
 import { processJob } from "../worker.js";
 import { assertDraftDistinct, readSkill, runStep, type ModelConfig } from "../runtime.js";
-import type { ArtifactUnit, ClaimedJob, GenerationJobDetail, JobCheckpoint, UsageRecord, WorkerProgress, AgentMemory } from "../contracts.js";
+import type { ArtifactUnit, ClaimedJob, GenerationJobDetail, JobCheckpoint, UsageRecord, WorkerProgress, AgentMemory, UnitBatch } from "../contracts.js";
 import { contextOverride, modelLimits } from "../model-limits.js";
 import { WorkflowError } from "../errors.js";
 
@@ -24,6 +24,8 @@ class MemoryApi extends ApiClient {
   data = { storyboard: [] as ArtifactUnit[], draft: [] as ArtifactUnit[] };
   steps: string[] = [];
   memory: AgentMemory | null = null;
+  previewed = 0;
+  previewUnits = 0;
   constructor() { super("http://unused", "test"); }
   override async detail() { return structuredClone(this.job); }
   override async heartbeat() {}
@@ -32,6 +34,15 @@ class MemoryApi extends ApiClient {
   }
   override async units(_id: string, kind: "draft" | "storyboard", offset: number, limit = 10) { return this.data[kind].slice(offset, offset + limit); }
   override async reviewUnits(_id: string, kind: "draft" | "storyboard", offset: number, limit = 5) { return this.data[kind].slice(offset, offset + limit); }
+  override async startSlidePreview(_id: string, _lease: string, batch: UnitBatch) {
+    this.previewed++; this.previewUnits = batch.units.length;
+    return { preview_id: "mock-preview" };
+  }
+  override async slidePreview() {
+    return { status: "ready" as const, images: Array.from({ length: this.previewUnits }, () => ({
+      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/pK0AAAAASUVORK5CYII=", mime_type: "image/png",
+    })) };
+  }
   override async call(_id: string, _lease: string, action: "reserve" | "usage", usage: UsageRecord) {
     if (action === "reserve") { if (this.job.model_calls >= this.job.max_model_calls) throw new WorkflowError("budget", "Budget exhausted"); this.job.model_calls++; }
     else this.job.total_tokens += usage.total_tokens;
@@ -84,16 +95,23 @@ async function provider(pressure = false) {
     const taskText = input.filter(item => item.role === "user").flatMap(item => item.content ?? []).find(item => item.text?.startsWith('{"task"'))?.text;
     if (taskText) lastPrompt = JSON.parse(taskText);
     const prompt = lastPrompt;
-    assert.deepEqual(payload.tools.map((item: { name: string }) => item.name).sort(), prompt.human_feedback ? ["read", "read_previous_units", "read_units", "submit"] : ["read", "read_units", "submit"]);
+    const visualStep = prompt.module === "concept" && ["draft", "review"].includes(prompt.task);
+    assert.deepEqual(payload.tools.map((item: { name: string }) => item.name).sort(),
+      [...(prompt.human_feedback ? ["read", "read_previous_units", "read_units", "submit"] : ["read", "read_units", "submit"]), ...(visualStep ? ["preview_slides"] : [])].sort());
+    if (prompt.module === "concept" && prompt.task === "draft") {
+      const submit = payload.tools.find((item: { name: string }) => item.name === "submit") as { parameters: { properties: { units: { items: { required: string[] } } } } };
+      assert.ok(submit.parameters.properties.units.items.required.includes("slide"));
+    }
     const hasRead = input.some(item => item.type === "function_call" && item.name === "read");
+    const hasPreview = input.some(item => item.type === "function_call" && item.name === "preview_slides");
     let name = "read"; let args: unknown = { path: "/skills/test-skill/SKILL.md" };
     if (hasRead) {
-      name = "submit";
+      name = visualStep && !hasPreview ? "preview_slides" : "submit";
       if (prompt.task === "plan") args = { skill_slug: "test-skill", summary: "Outline ready", target_units: prompt.target_units, sections: [{ title: "Project", start_unit: 1, end_unit: prompt.target_units, objective: "Review draft" }] };
       else if (["review", "final_review"].includes(prompt.task)) {
         const failed = prompt.task === "review" && prompt.existing_units[0].body === "first draft";
-        args = { passed: !failed, summary: failed ? "Revise content" : "Consistent", issues: failed ? ["Needs revision"] : [] };
-      } else args = { units: Array.from({ length: prompt.unit_range[1] - prompt.unit_range[0] + 1 }, (_, index) => ({ unit_index: prompt.unit_range[0] + index, title: `Unit ${prompt.unit_range[0] + index}`, body: prompt.task === "storyboard" ? "content plan" : prompt.task === "draft" && !prompt.previous_review ? "first draft" : "revised draft", evidence: ["user-brief"], missing_facts: [] })) };
+        args = name === "preview_slides" ? {} : { passed: !failed, summary: failed ? "Revise content" : "Consistent", issues: failed ? ["Needs revision"] : [] };
+      } else args = { units: Array.from({ length: prompt.unit_range[1] - prompt.unit_range[0] + 1 }, (_, index) => ({ unit_index: prompt.unit_range[0] + index, title: `Unit ${prompt.unit_range[0] + index}`, body: prompt.task === "storyboard" ? "content plan" : prompt.task === "draft" && !prompt.previous_review ? "first draft" : "revised draft", evidence: ["user-brief"], missing_facts: [], ...(prompt.module === "concept" && prompt.task === "draft" ? { slide: { background: "FFFFFF", elements: [{ kind: "text", x: 1, y: 1, w: 10, h: 2, text: `Unit ${prompt.unit_range[0] + index}`, font_size: 32 }] } } : {}) })) };
     }
     if (pressure && hasRead && !inspectedLargePage) {
       name = "read_units"; args = { kind: "storyboard", offset: 0, limit: 1 }; inspectedLargePage = true;
@@ -141,6 +159,7 @@ test("Pi selects/reads skills, pauses for two approvals, iterates revisions and 
     assert.equal(api.job.total_tokens, endpoint.requests.length * 120);
     assert.ok(endpoint.requests.some(request => request.model === "review-model"));
     assert.equal(api.data.draft.length, 8);
+    assert.ok(api.previewed >= 4, "Every concept draft and review batch must render a visual preview");
     const prompts = endpoint.requests.flatMap(request => request.input as Array<{ role?: string; content?: Array<{ text?: string }> }>)
       .filter(item => item.role === "user").flatMap(item => item.content ?? []).filter(item => item.text?.startsWith('{"task"')).map(item => JSON.parse(item.text!));
     const storyboardPrompt = prompts.find(item => item.task === "storyboard");
@@ -279,7 +298,9 @@ test("exhausted budget blocks the request before reaching the endpoint", async (
   } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
 });
 
-for (const [module, target, batchSize] of [["concept", 100, 5], ["bid", 137, 7]] as const) test(`${module}: ${target} units travel through real FastAPI, SQLite, Pi and the Responses adapter`, async () => {
+// The concept visual path is exercised above with a mock renderer and below in
+// API/document tests. This endpoint-only fixture has no LibreOffice process.
+for (const [module, target, batchSize] of [["bid", 137, 7]] as const) test(`${module}: ${target} units travel through real FastAPI, SQLite, Pi and the Responses adapter`, async () => {
   const root = fileURLToPath(new URL("../../../../", import.meta.url));
   const python = process.env.ARCHFLOW_TEST_PYTHON ?? join(root, "services/api/.venv/bin/python");
   await access(python); // This test requires pip install -e 'services/api[dev]'. No silent skip.

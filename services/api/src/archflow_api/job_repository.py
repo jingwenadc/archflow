@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import sqlite3
@@ -44,20 +45,25 @@ def snapshot_skills(repository_root: Path) -> list[SkillSnapshot]:
         metadata = yaml.safe_load(parts[1]) if len(parts) == 3 else {}
         if not isinstance(metadata, dict) or not metadata.get("description"):
             continue
-        files = {}
+        files, images = {}, {}
         for path in sorted(directory.rglob("*")):
-            if path.is_file() and path.suffix.lower() in {".md", ".txt"}:
-                if not path.resolve().is_relative_to(directory):
-                    continue
+            if not path.is_file() or not path.resolve().is_relative_to(directory):
+                continue
+            relative = path.relative_to(directory).as_posix()
+            if path.suffix.lower() in {".md", ".txt", ".json", ".py", ".yaml", ".yml"}:
                 if path.stat().st_size > 512 * 1024:
                     raise HTTPException(422, "Skill instruction file exceeds snapshot limit.")
-                files[path.relative_to(directory).as_posix()] = path.read_text("utf-8")
-        serialized = json.dumps(files, ensure_ascii=False, sort_keys=True)
-        if len(serialized.encode()) > 2 * 1024 * 1024:
-            raise HTTPException(422, "Skill snapshot exceeds 2 MB limit.")
+                files[relative] = path.read_text("utf-8")
+            elif relative.startswith("assets/") and path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+                if path.stat().st_size > 2 * 1024 * 1024:
+                    raise HTTPException(422, "Skill visual exceeds snapshot limit.")
+                images[relative] = base64.b64encode(path.read_bytes()).decode("ascii")
+        serialized = json.dumps({"files": files, "images": images}, ensure_ascii=False, sort_keys=True)
+        if len(serialized.encode()) > 4 * 1024 * 1024:
+            raise HTTPException(422, "Skill snapshot exceeds 4 MB limit.")
         snapshots.append(SkillSnapshot(
             slug=directory.name, description=str(metadata["description"]),
-            sha256=hashlib.sha256(serialized.encode()).hexdigest(), files=files,
+            sha256=hashlib.sha256(serialized.encode()).hexdigest(), files=files, images=images,
         ))
     if not snapshots:
         raise HTTPException(503, "No readable skills are configured.")
@@ -114,6 +120,9 @@ class JobRepository:
                 );
                 CREATE TABLE IF NOT EXISTS generation_memory (
                     job_id TEXT PRIMARY KEY REFERENCES generation_jobs(id), payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS skill_assets (
+                    digest TEXT PRIMARY KEY, data BLOB NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS generation_queue_idx ON generation_jobs(status, lease_until, created_at);
                 CREATE INDEX IF NOT EXISTS generation_project_idx ON generation_jobs(project_id, created_at DESC);
@@ -178,13 +187,27 @@ class JobRepository:
             ).fetchone():
                 raise HTTPException(404, "Conversation not found in this project and module.")
             job_id = str(uuid4())
+            frozen_skills = []
+            for skill in skills:
+                image_hashes = {}
+                for path, value in skill.images.items():
+                    if len(value) == 64 and all(character in "0123456789abcdef" for character in value):
+                        if not db.execute("SELECT 1 FROM skill_assets WHERE digest=?", (value,)).fetchone():
+                            raise HTTPException(409, "Frozen skill image is missing.")
+                        image_hashes[path] = value
+                    else:
+                        data = base64.b64decode(value, validate=True)
+                        digest = hashlib.sha256(data).hexdigest()
+                        db.execute("INSERT OR IGNORE INTO skill_assets(digest,data) VALUES(?,?)", (digest, data))
+                        image_hashes[path] = digest
+                frozen_skills.append(skill.model_copy(update={"images": image_hashes}).model_dump())
             values = request.model_dump() | {
                 "max_model_calls": request.max_model_calls if request.max_model_calls is not None else defaults.max_model_calls,
                 "max_total_tokens": request.max_total_tokens if request.max_total_tokens is not None else defaults.max_total_tokens,
                 "id": job_id, "model": model, "review_model": review_model,
                 "status": "queued", "stage": "planning", "created_at": timestamp(),
                 "updated_at": timestamp(), "idempotency_key": key, "request_hash": fingerprint,
-                "skills": json.dumps([skill.model_dump() for skill in skills], ensure_ascii=False),
+                "skills": json.dumps(frozen_skills, ensure_ascii=False),
             }
             columns = ",".join(values)
             placeholders = ",".join("?" for _ in values)
@@ -323,7 +346,8 @@ class JobRepository:
     def progress(self, job_id: str, lease_id: str, request: WorkerProgress) -> None:
         messages = {"skills": "正在应用设计技能", "materials": "正在阅读项目资料",
                     "planning": "正在整理章节提纲", "storyboarding": "正在策划每页内容",
-                    "generating": "正在生成页面内容", "reviewing": "正在检查来源与内容一致性",
+                    "generating": "正在生成页面内容", "previewing": "正在渲染并检查页面视觉效果",
+                    "reviewing": "正在检查来源与内容一致性",
                     "compacting": "正在整理资料记忆，随后继续", "continuing": "资料记忆已整理，继续当前步骤"}
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -465,7 +489,9 @@ class JobRepository:
                     allowed = {"user-brief"} | {page["id"] for doc in sources for page in doc["pages"]}
                     if any(source not in allowed for source in unit.evidence):
                         raise HTTPException(422, "Evidence must cite this job's frozen source page IDs.")
-                    if unit.image_id and unit.image_id not in {asset["id"] for doc in sources for asset in doc["assets"]}:
+                    allowed_images = {asset["id"] for doc in sources for asset in doc["assets"]}
+                    used_images = ([unit.image_id] if unit.image_id else []) + ([element.image_id for element in unit.slide.elements if element.image_id] if unit.slide else [])
+                    if any(image_id not in allowed_images for image_id in used_images):
                         raise HTTPException(422, "Image does not belong to this project snapshot.")
                     revision_units = self.documents.revisions(job_id)
                     if kind == "draft" and revision_units and unit.unit_index not in revision_units:

@@ -1,4 +1,4 @@
-import type { ClaimedJob, GenerationJobDetail, ArtifactUnit, JobCheckpoint, UsageRecord, WorkerProgress } from "./contracts.js";
+import type { ClaimedJob, GenerationJobDetail, ArtifactUnit, JobCheckpoint, UsageRecord, WorkerProgress, UnitBatch } from "./contracts.js";
 import { WorkflowError } from "./errors.js";
 
 export class ApiClient {
@@ -35,6 +35,15 @@ export class ApiClient {
   }
   image(id: string, imageId: string) {
     return this.request<{ data: string; mime_type: string }>(`/internal/jobs/${id}/images?image_id=${encodeURIComponent(imageId)}`);
+  }
+  skillImage(id: string, lease: string, path: string) {
+    return this.request<{ data: string; mime_type: string }>(`/internal/jobs/${id}/skill-images?path=${encodeURIComponent(path)}`, undefined, lease);
+  }
+  startSlidePreview(id: string, lease: string, batch: UnitBatch) {
+    return this.request<{ preview_id: string }>(`/internal/jobs/${id}/slide-previews`, batch, lease);
+  }
+  slidePreview(id: string, lease: string, previewId: string) {
+    return this.request<{ status: "queued" | "processing" | "failed" | "ready"; error?: string; images?: Array<{ data: string; mime_type: string }> }>(`/internal/jobs/${id}/slide-previews/${encodeURIComponent(previewId)}`, undefined, lease);
   }
   heartbeat(id: string, lease: string) { return this.request<void>(`/internal/jobs/${id}/heartbeat`, {}, lease); }
   progress(id: string, lease: string, body: WorkerProgress) { return this.request<void>(`/internal/jobs/${id}/progress`, body, lease); }

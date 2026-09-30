@@ -17,6 +17,57 @@ const accent = theme.accent ?? "284E5C";
 const font = "Noto Sans CJK SC";
 deck.theme = { headFontFace: font, bodyFontFace: font, lang: "zh-CN" };
 const issues = [];
+const assets = new Map(sources.flatMap(doc => doc.assets.map(asset => [asset.id, { ...asset, directory: doc.directory }])));
+async function placeImage(slide, assetId, box) {
+  const image = assets.get(assetId);
+  if (!image) throw new Error(`第 ${box.page} 页使用了不属于当前资料的图片。`);
+  const imagePath = path.join(image.directory, image.file);
+  const dimensions = imageSize(await fs.readFile(imagePath));
+  if (box.fit === "cover") {
+    // PptxGenJS computes srcRect from the image object's initial w/h, then
+    // replaces its slide geometry with sizing.w/h. Initial dimensions must
+    // reflect the source aspect ratio, not the destination box.
+    slide.addImage({ path: imagePath, x: box.x, y: box.y, w: dimensions.width / 100, h: dimensions.height / 100,
+      sizing: { type: "cover", w: box.w, h: box.h }, altText: image.caption ?? "项目资料" });
+    return;
+  }
+  const scale = Math.min(box.w / dimensions.width, box.h / dimensions.height);
+  const w = dimensions.width * scale, h = dimensions.height * scale;
+  slide.addImage({ path: imagePath, x: box.x + (box.w - w) / 2, y: box.y + (box.h - h) / 2, w, h, altText: image.caption ?? "项目资料" });
+}
+
+async function renderDesignedSlide(slide, unit) {
+  const design = unit.slide;
+  slide.background = { color: design.background };
+  for (const element of design.elements) {
+    const box = { x: element.x, y: element.y, w: element.w, h: element.h };
+    if (box.x + box.w > 13.334 || box.y + box.h > 7.501) throw new Error(`第 ${unit.unit_index} 页有元素超出画布。`);
+    if (element.kind === "image") {
+      await placeImage(slide, element.image_id, { ...box, fit: element.fit, page: unit.unit_index });
+    } else if (element.kind === "text") {
+      const characters = [...element.text].reduce((total, char) => total + (char.charCodeAt(0) < 128 ? .55 : 1), 0);
+      const capacity = Math.max(1, Math.floor(box.w * 72 / element.font_size * box.h * 72 / (element.font_size * 1.4)));
+      if (characters > capacity * 1.35) issues.push(`第 ${unit.unit_index} 页文字框过密：${element.text.slice(0, 24)}…`);
+      slide.addText(element.text, { ...box, fontFace: font, fontSize: element.font_size, bold: element.bold, color: element.color,
+        align: element.align, valign: element.valign, margin: 0, breakLine: false });
+    } else if (element.kind === "table") {
+      if (element.rows.some(row => row.some(cell => cell.length > 45))) issues.push(`第 ${unit.unit_index} 页表格单元格过密。`);
+      const styledRows = element.rows.map((row, index) => row.map(cell => ({ text: cell, options: {
+        fill: { color: index === 0 && element.header_fill ? element.header_fill : index % 2 === 0 && element.alternate_fill ? element.alternate_fill : element.fill ?? "FFFFFF" },
+        color: index === 0 && element.header_color ? element.header_color : element.color, bold: index === 0,
+      } })));
+      slide.addTable(styledRows, { ...box, fontFace: font, fontSize: element.font_size, color: element.color,
+        border: { pt: .5, color: element.stroke ?? "D7DEE2" }, fill: { color: element.fill ?? "FFFFFF" },
+        margin: .06, autoPage: false, rowH: Math.min(.6, box.h / element.rows.length) });
+    } else if (element.kind === "line") {
+      slide.addShape(deck.ShapeType.line, { ...box, line: { color: element.stroke ?? element.color, width: 1.5 } });
+    } else {
+      slide.addShape(element.kind === "ellipse" ? deck.ShapeType.ellipse : deck.ShapeType.rect,
+        { ...box, rectRadius: 0, line: { color: element.stroke ?? element.fill ?? design.background, width: element.stroke ? 1 : 0 },
+          fill: { color: element.fill ?? design.background } });
+    }
+  }
+}
 function wrap(text, width) {
   return text.split("\n").flatMap(paragraph => {
     const tokens = paragraph.match(/[A-Za-z0-9]+(?:[.,/_-][A-Za-z0-9]+)*|./gu) ?? [];
@@ -38,6 +89,18 @@ function wrap(text, width) {
 
 for (const unit of units) {
   const slide = deck.addSlide();
+  if (unit.slide) {
+    await renderDesignedSlide(slide, unit);
+    const citations = unit.evidence.map(id => {
+      for (const doc of sources) {
+        const page = doc.pages.find(page => page.id === id);
+        if (page) return `${doc.name}，第 ${page.page} 页（${doc.role === "reference" ? "参考案例，不是当前项目事实" : "项目资料"}）`;
+      }
+      return id === "user-brief" ? "用户在项目对话中确认的需求" : id;
+    });
+    slide.addNotes(citations.join("\n"));
+    continue;
+  }
   slide.background = { color: "FFFFFF" };
   const image = unit.layout === "table" ? null : sources.flatMap(doc => doc.assets.map(asset => ({ ...asset, directory: doc.directory }))).find(asset => asset.id === unit.image_id);
   const isCover = unit.layout === "cover";
