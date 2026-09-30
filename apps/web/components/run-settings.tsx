@@ -67,5 +67,14 @@ export function RunSettingsProvider({ children }: { children: ReactNode }) {
 
 export function RunSettingsButton() {
   const { openSettings } = useRunSettings();
+  const [allowed, setAllowed] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    Promise.all([apiRequest<{ enabled: boolean }>("/api/v1/auth/status"), apiRequest<{ role: string }>("/api/v1/auth/me").catch(() => null)])
+      .then(([status, user]) => { if (mounted) setAllowed(!status.enabled || user?.role === "admin"); })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, []);
+  if (!allowed) return null;
   return <button className="icon-button settings-button" aria-label="运行设置" title="运行设置" onClick={openSettings}><SettingsIcon /></button>;
 }

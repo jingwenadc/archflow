@@ -180,8 +180,9 @@ def test_compaction_memory_is_durable_and_lease_fenced(tmp_path):
     repo.progress(job.id, claim.lease_id, WorkerProgress(step="compacting"))
     repo.progress(job.id, claim.lease_id, WorkerProgress(step="continuing", memory=memory))
     repo.progress(job.id, claim.lease_id, WorkerProgress(step="continuing", memory=memory))
-    assert repo.detail(job.id).progress == "资料记忆已整理，继续当前步骤"
-    assert len([event for event in repo.events(job.id, 0) if event.event_type == "progress"]) == 2
+    repo.progress(job.id, claim.lease_id, WorkerProgress(step="retrying"))
+    assert repo.detail(job.id).progress == "模型连接暂时中断，正在自动重试当前步骤"
+    assert len([event for event in repo.events(job.id, 0) if event.event_type == "progress"]) == 3
     assert repo.detail(job.id).total_tokens == 0  # Progress itself cannot reset/alter billing.
     with repo.connect() as db:
         db.execute("UPDATE generation_jobs SET lease_until=0 WHERE id=?", (job.id,))

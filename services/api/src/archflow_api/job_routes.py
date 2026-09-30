@@ -21,12 +21,15 @@ from .project_repository import ProjectRepository
 from .materials import DocumentRepository, collect_materials
 from .artifacts import queue_export, export_status, exported_file
 from .reviews import Reviews
+from .auth import require_admin
+from .call_traces import CallTraces
 
 
 def job_routers(settings: Settings, projects: ProjectRepository,
                 conversations: ConversationRepository) -> tuple[APIRouter, APIRouter]:
     jobs = JobRepository(settings.database_path)
     documents = DocumentRepository(settings.database_path)
+    traces = CallTraces(settings.project_dir)
     public = APIRouter(prefix="/api/v1/jobs", tags=["generation"])
 
     def require_worker(authorization: Annotated[str | None, Header()] = None) -> None:
@@ -223,6 +226,24 @@ def job_routers(settings: Settings, projects: ProjectRepository,
             "Cache-Control": "no-store",
         })
 
+    @public.get("/{job_id}/model-calls")
+    def admin_model_calls(job_id: str, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=200)):
+        require_admin()
+        with jobs.connect() as db:
+            jobs.require(db, job_id)
+            return [dict(row) for row in db.execute(
+                "SELECT call_id,model,total_tokens FROM generation_calls WHERE job_id=? ORDER BY rowid LIMIT ? OFFSET ?",
+                (job_id, limit, offset))]
+
+    @public.get("/{job_id}/model-calls/{call_id}")
+    def admin_model_call(job_id: str, call_id: str):
+        require_admin()
+        with jobs.connect() as db:
+            job = jobs.require(db, job_id)
+            if not db.execute("SELECT 1 FROM generation_calls WHERE job_id=? AND call_id=?", (job_id, call_id)).fetchone():
+                raise HTTPException(404, "Model call not found.")
+        return traces.read(job["project_id"], job_id, call_id)
+
     @internal.post("/claim", response_model=ClaimedJob | None)
     def claim() -> ClaimedJob | None:
         return jobs.claim()
@@ -340,6 +361,18 @@ def job_routers(settings: Settings, projects: ProjectRepository,
             jobs.reserve_call(job_id, lease_id, request)
         else:
             jobs.usage(job_id, lease_id, request)
+        return Response(status_code=204)
+
+    @internal.post("/{job_id}/calls/{call_id}/trace", status_code=204)
+    def record_trace(job_id: str, call_id: str, request: dict, lease_id: Annotated[str, Header()]):
+        with jobs.connect() as db:
+            row = jobs.leased(db, job_id, lease_id)
+            if not db.execute("SELECT 1 FROM generation_calls WHERE job_id=? AND call_id=?", (job_id, call_id)).fetchone():
+                raise HTTPException(404, "Reserved model call not found.")
+        phase, data = request.get("phase"), request.get("data")
+        if not isinstance(data, dict):
+            raise HTTPException(422, "Trace data must be an object.")
+        traces.save(row["project_id"], job_id, call_id, phase, data)
         return Response(status_code=204)
 
     return public, internal

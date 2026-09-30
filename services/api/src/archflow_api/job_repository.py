@@ -26,6 +26,7 @@ from .materials import DocumentRepository
 from .requirements import scope_mismatch, plan_scope_error
 from .run_settings import RunSettingsRepository
 from .reviews import Reviews
+from .auth import authorize_project
 
 
 def timestamp() -> str:
@@ -152,6 +153,7 @@ class JobRepository:
         row = db.execute("SELECT * FROM generation_jobs WHERE id=?", (job_id,)).fetchone()
         if row is None:
             raise HTTPException(404, "Generation job not found.")
+        authorize_project(db, row["project_id"])
         return row
 
     def leased(self, db: sqlite3.Connection, job_id: str, lease_id: str) -> sqlite3.Row:
@@ -348,7 +350,8 @@ class JobRepository:
                     "planning": "正在整理章节提纲", "storyboarding": "正在策划每页内容",
                     "generating": "正在生成页面内容", "previewing": "正在渲染并检查页面视觉效果",
                     "reviewing": "正在检查来源与内容一致性",
-                    "compacting": "正在整理资料记忆，随后继续", "continuing": "资料记忆已整理，继续当前步骤"}
+                    "compacting": "正在整理资料记忆，随后继续", "continuing": "资料记忆已整理，继续当前步骤",
+                    "retrying": "模型连接暂时中断，正在自动重试当前步骤"}
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = self.leased(db, job_id, lease_id)

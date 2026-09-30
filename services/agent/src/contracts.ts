@@ -251,7 +251,7 @@ export type UsageRecord = {
 };
 
 export type WorkerProgress = {
-  step: "skills" | "materials" | "planning" | "storyboarding" | "generating" | "previewing" | "reviewing" | "compacting" | "continuing";
+  step: "skills" | "materials" | "planning" | "storyboarding" | "generating" | "previewing" | "reviewing" | "compacting" | "continuing" | "retrying";
   memory?: AgentMemory | null;
 };
 

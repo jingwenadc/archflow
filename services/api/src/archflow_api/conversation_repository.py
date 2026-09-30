@@ -7,6 +7,7 @@ from uuid import uuid4, uuid5, NAMESPACE_URL
 from fastapi import HTTPException, status
 
 from .models import ConversationCreate, ConversationRecord, MessageCreate, MessageRecord, TrashedConversation
+from .auth import authorize_project
 
 SCHEMA_VERSION = 2
 
@@ -187,5 +188,7 @@ class ConversationRepository:
 
     @staticmethod
     def _require_conversation(connection: sqlite3.Connection, conversation_id: str) -> None:
-        if connection.execute("SELECT 1 FROM conversations WHERE id = ? AND deleted_at IS NULL", (conversation_id,)).fetchone() is None:
+        row = connection.execute("SELECT project_id FROM conversations WHERE id = ? AND deleted_at IS NULL", (conversation_id,)).fetchone()
+        if row is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+        authorize_project(connection, row["project_id"])

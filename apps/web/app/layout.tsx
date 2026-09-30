@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { RunSettingsProvider } from "@/components/run-settings";
+import { AuthGate } from "@/components/auth-gate";
 
 export const metadata: Metadata = {
   title: "图策 ArchFlow｜建筑设计智能工作台",
@@ -11,7 +12,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN">
-      <body><RunSettingsProvider>{children}</RunSettingsProvider></body>
+      <body><AuthGate><RunSettingsProvider>{children}</RunSettingsProvider></AuthGate></body>
     </html>
   );
 }

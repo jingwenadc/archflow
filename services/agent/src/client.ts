@@ -4,12 +4,12 @@ import { WorkflowError } from "./errors.js";
 export class ApiClient {
   constructor(private readonly baseUrl: string, private readonly token: string) {}
 
-  private async request<T>(path: string, body?: unknown, lease?: string): Promise<T> {
+  private async request<T>(path: string, body?: unknown, lease?: string, timeoutMs = 15_000): Promise<T> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       method: body === undefined ? "GET" : "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.token}`, ...(lease ? { "Lease-Id": lease } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) {
       // Never log provider responses, credentials, or the private project brief.
@@ -52,5 +52,8 @@ export class ApiClient {
   }
   call(id: string, lease: string, operation: "reserve" | "usage", body: UsageRecord) {
     return this.request<void>(`/internal/jobs/${id}/calls/${operation}`, body, lease);
+  }
+  trace(id: string, lease: string, callId: string, phase: "request" | "response", data: Record<string, unknown>) {
+    return this.request<void>(`/internal/jobs/${id}/calls/${callId}/trace`, { phase, data }, lease, 60_000);
   }
 }

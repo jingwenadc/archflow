@@ -5,7 +5,11 @@ import { ApiClient } from "./client.js";
 import { runStep, type ModelConfig } from "./runtime.js";
 import { contextOverride } from "./model-limits.js";
 import type { ClaimedJob } from "./contracts.js";
-import { WorkflowError } from "./errors.js";
+import { WorkflowError, isRetryableProviderError } from "./errors.js";
+
+const MAX_PROVIDER_RETRIES = 4;
+const RETRY_BASE_MS = 1_000;
+const RETRY_CAP_MS = 15_000;
 
 export async function processJob(api: ApiClient, claim: ClaimedJob, config: ModelConfig, shutdown: AbortSignal) {
   const lostLease = new AbortController();
@@ -20,7 +24,18 @@ export async function processJob(api: ApiClient, claim: ClaimedJob, config: Mode
   }, 15_000);
   try {
     while (claim.job.status === "running" && !signal.aborted) {
-      await runStep(api, claim, config, AbortSignal.any([signal, AbortSignal.timeout(15 * 60_000)]));
+      const stepSignal = AbortSignal.any([signal, AbortSignal.timeout(15 * 60_000)]);
+      for (let retries = 0; ; retries++) {
+        try { await runStep(api, claim, config, stepSignal); break; }
+        catch (error) {
+          if (!isRetryableProviderError(error) || retries >= MAX_PROVIDER_RETRIES || stepSignal.aborted) throw error;
+          // Each attempt creates a fresh Pi session and reserves a fresh model call.
+          // Persisted batches remain authoritative; no earlier checkpoint is replayed.
+          await api.progress(claim.job.id, claim.lease_id, { step: "retrying" }).catch(() => undefined);
+          const backoff = Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** retries);
+          await delay(Math.round(backoff * (0.75 + Math.random() * 0.5)), undefined, { signal: stepSignal });
+        }
+      }
       claim.job = await api.detail(claim.job.id);
     }
   } catch (error) {

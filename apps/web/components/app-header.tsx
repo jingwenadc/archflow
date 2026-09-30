@@ -4,6 +4,7 @@ import { BrandMark } from "./brand";
 import { LibraryIcon } from "./icons";
 import { ProjectSwitcher } from "./project-switcher";
 import { RunSettingsButton } from "./run-settings";
+import { AccountMenu } from "./account-menu";
 
 export function AppHeader({ active }: { active: ModuleKey | "skills" }) {
   return (
@@ -22,7 +23,7 @@ export function AppHeader({ active }: { active: ModuleKey | "skills" }) {
           <LibraryIcon />案例 / 技能库
         </Link>
         <RunSettingsButton />
-        <span className="avatar" aria-label="当前用户">J</span>
+        <AccountMenu />
       </div>
     </header>
   );

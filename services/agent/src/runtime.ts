@@ -225,6 +225,12 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
   const originalStream = session.agent.streamFunction;
   let calls = 0;
   let compactions = 0;
+  const safeTrace = (value: Record<string, unknown>): Record<string, unknown> => {
+    let serialized = JSON.stringify(value);
+    if (config.apiKey) serialized = serialized.replaceAll(config.apiKey, "[redacted]");
+    if (config.baseUrl) serialized = serialized.replaceAll(config.baseUrl, "[endpoint]");
+    return JSON.parse(serialized) as Record<string, unknown>;
+  };
   session.agent.streamFunction = async (currentModel, context, options) => {
     signal.throwIfAborted();
     if (streamError) throw streamError;
@@ -238,19 +244,37 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
     catch (error) { streamError = error; throw error; } // Preserve typed local errors across the SDK message boundary.
     // Some Responses gateways reject Pi's session-affinity headers with HTTP 520.
     // The durable task is already in SQLite; provider-side session affinity is unnecessary.
-    const stream = await originalStream(currentModel, context, { ...options, sessionId: undefined, cacheRetention: "none", signal: AbortSignal.any([signal, ...(options?.signal ? [options.signal] : [])]), onPayload: async (payload, providerModel) => {
-      const transformed = await options?.onPayload?.(payload, providerModel) ?? payload;
-      return { ...transformed as Record<string, unknown>, store: false, max_output_tokens: limits.maxOutputTokens };
-    } });
+    let stream: Awaited<ReturnType<typeof originalStream>>;
+    try {
+      stream = await originalStream(currentModel, context, { ...options, sessionId: undefined, cacheRetention: "none", signal: AbortSignal.any([signal, ...(options?.signal ? [options.signal] : [])]), onPayload: async (payload, providerModel) => {
+        const transformed = await options?.onPayload?.(payload, providerModel) ?? payload;
+        const request = { ...transformed as Record<string, unknown>, store: false, max_output_tokens: limits.maxOutputTokens };
+        // Persist the exact provider-bound body before sending a billable request.
+        await api.trace(job.id, claim.lease_id, callId, "request", safeTrace({ model: modelId, action, body: request }));
+        return request;
+      } });
+    } catch (error) {
+      streamError = error;
+      await api.trace(job.id, claim.lease_id, callId, "response", safeTrace({ error: error instanceof Error ? error.message : String(error) })).catch(() => {});
+      throw error;
+    }
     // Compaction bypasses agent message_end, so account at the shared stream boundary.
     // Do not release terminal output to Pi/tools until usage is durably recorded.
     const accounted = createAssistantMessageEventStream();
     void (async () => {
+      const recordedEvents: unknown[] = [];
+      let usageRecorded = false;
       try {
         for await (const event of stream) {
+          recordedEvents.push(event);
           if (event.type === "done" || event.type === "error") {
             const message = event.type === "done" ? event.message : event.error;
+            let traceFailure: unknown;
+            try { await api.trace(job.id, claim.lease_id, callId, "response", safeTrace({ outcome: event.type, message, events: recordedEvents })); }
+            catch (error) { traceFailure = error; }
             await api.call(job.id, claim.lease_id, "usage", { call_id: callId, model: modelId, total_tokens: message.usage.totalTokens });
+            usageRecorded = true;
+            if (traceFailure) throw traceFailure;
           }
           accounted.push(event);
         }
@@ -258,6 +282,11 @@ export async function runStep(api: ApiClient, claim: ClaimedJob, config: ModelCo
       } catch (error) {
         streamError = error;
         const message = await stream.result();
+        await api.trace(job.id, claim.lease_id, callId, "response", safeTrace({ outcome: "error", message, events: recordedEvents,
+          error: error instanceof Error ? error.message : String(error) })).catch(() => {});
+        if (!usageRecorded && message.usage?.totalTokens) {
+          await api.call(job.id, claim.lease_id, "usage", { call_id: callId, model: modelId, total_tokens: message.usage.totalTokens }).catch(() => {});
+        }
         accounted.push({ type: "error", reason: "error", error: { ...message, stopReason: "error", errorMessage: error instanceof Error ? error.message : "Usage accounting failed." } });
         accounted.end();
       }

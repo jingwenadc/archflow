@@ -59,7 +59,7 @@ class LocalFileStorage:
 
         file_id = str(uuid4())
         target_dir = self.root / file_id
-        target_dir.mkdir(parents=True, exist_ok=True)
+        target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         target = target_dir / f"original{extension}"
         metadata_path = target_dir / "metadata.json"
         size = 0

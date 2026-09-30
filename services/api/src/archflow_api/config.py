@@ -19,6 +19,8 @@ class Settings:
     review_model: str = "gpt-6-sol"
     agent_enabled: bool = False
     worker_token: str | None = None
+    signup_code: str | None = None
+    secure_cookies: bool = False
 
 
 def load_settings() -> Settings:
@@ -43,4 +45,6 @@ def load_settings() -> Settings:
         review_model=getenv("ARCHFLOW_REVIEW_MODEL", "gpt-6-sol"),
         agent_enabled=getenv("ARCHFLOW_AGENT_ENABLED", "false").lower() == "true",
         worker_token=getenv("ARCHFLOW_WORKER_TOKEN") or None,
+        signup_code=getenv("ARCHFLOW_SIGNUP_CODE") or None,
+        secure_cookies=getenv("ARCHFLOW_COOKIE_SECURE", "false").lower() == "true",
     )

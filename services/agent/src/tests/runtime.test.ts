@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, rm, mkdir, writeFile, access } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile, access, readdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -12,7 +12,7 @@ import { processJob } from "../worker.js";
 import { assertDraftDistinct, readSkill, runStep, type ModelConfig } from "../runtime.js";
 import type { ArtifactUnit, ClaimedJob, GenerationJobDetail, JobCheckpoint, UsageRecord, WorkerProgress, AgentMemory, UnitBatch } from "../contracts.js";
 import { contextOverride, modelLimits } from "../model-limits.js";
-import { WorkflowError } from "../errors.js";
+import { WorkflowError, isRetryableProviderError } from "../errors.js";
 
 class MemoryApi extends ApiClient {
   job: GenerationJobDetail = {
@@ -26,6 +26,8 @@ class MemoryApi extends ApiClient {
   memory: AgentMemory | null = null;
   previewed = 0;
   previewUnits = 0;
+  traces: Array<{ callId: string; phase: "request" | "response"; data: Record<string, unknown> }> = [];
+  traceFailure?: "request" | "response";
   constructor() { super("http://unused", "test"); }
   override async detail() { return structuredClone(this.job); }
   override async heartbeat() {}
@@ -46,6 +48,10 @@ class MemoryApi extends ApiClient {
   override async call(_id: string, _lease: string, action: "reserve" | "usage", usage: UsageRecord) {
     if (action === "reserve") { if (this.job.model_calls >= this.job.max_model_calls) throw new WorkflowError("budget", "Budget exhausted"); this.job.model_calls++; }
     else this.job.total_tokens += usage.total_tokens;
+  }
+  override async trace(_id: string, _lease: string, callId: string, phase: "request" | "response", data: Record<string, unknown>) {
+    if (this.traceFailure === phase) throw new WorkflowError("workflow", "Trace storage unavailable");
+    this.traces.push({ callId, phase, data });
   }
   override async checkpoint(_id: string, _lease: string, checkpoint: JobCheckpoint) {
     if (checkpoint.action === "plan") { this.job.outline = checkpoint.plan; this.job.status = "waiting_outline"; }
@@ -70,7 +76,7 @@ class MemoryApi extends ApiClient {
 }
 
 /** A deterministic SSE fixture exercises the REAL Pi Responses adapter and tool loop. */
-async function provider(pressure = false) {
+async function provider(pressure = false, failFirst?: "disconnect" | "unavailable" | "unauthorized") {
   const requests: Record<string, unknown>[] = [];
   let lastPrompt: Record<string, any>;
   let inspectedLargePage = false;
@@ -81,6 +87,13 @@ async function provider(pressure = false) {
     assert.equal(payload.reasoning?.effort, "high");
     assert.equal(req.url, "/v1/responses");
     assert.equal(req.headers.authorization, "Bearer test-only");
+    if (requests.length === 1 && failFirst) {
+      if (failFirst === "disconnect") { req.socket.destroy(); return; }
+      const status = failFirst === "unavailable" ? 503 : 401;
+      res.writeHead(status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: { message: failFirst === "unavailable" ? "Service temporarily unavailable" : "Invalid API key", type: "api_error" } }));
+      return;
+    }
     const input = payload.input as Array<{ type?: string; role?: string; content?: Array<{ text?: string }>; name?: string }>;
     const compacting = !payload.tools?.length;
     if (compacting) {
@@ -160,6 +173,9 @@ test("Pi selects/reads skills, pauses for two approvals, iterates revisions and 
     assert.equal(api.job.completed_units, 8);
     assert.equal(api.job.batches[0].draft_count, 2);
     assert.equal(api.job.model_calls, endpoint.requests.length);
+    assert.equal(api.traces.filter(item => item.phase === "request").length, endpoint.requests.length);
+    assert.equal(api.traces.filter(item => item.phase === "response").length, endpoint.requests.length);
+    assert.ok(api.traces.every(item => !JSON.stringify(item.data).includes("test-only")), "API key must not enter traces");
     assert.ok(endpoint.requests.every(request => !request.prompt_cache_key), "Gateway-unsafe affinity must remain disabled.");
     assert.equal(api.job.total_tokens, endpoint.requests.length * 120);
     assert.ok(endpoint.requests.some(request => request.model === "review-model"));
@@ -239,6 +255,63 @@ test("configuration and budget failures are typed, not inferred from their wordi
   } finally { await rm(workDir, { recursive: true, force: true }); }
 });
 
+test("only transient provider failures qualify for automatic replay", () => {
+  for (const message of ["Connection error.", "fetch failed", "request timed out", "502 Bad Gateway", "503 Service Unavailable", "429 rate limit", "ECONNRESET"]) {
+    assert.equal(isRetryableProviderError(new WorkflowError("provider", message)), true, message);
+  }
+  for (const message of ["Invalid API key", "401 Unauthorized", "insufficient_quota: 429", "Billing limit reached", "Invalid request", "Context length exceeded"]) {
+    assert.equal(isRetryableProviderError(new WorkflowError("provider", message)), false, message);
+  }
+  assert.equal(isRetryableProviderError(new WorkflowError("budget", "Connection error.")), false);
+});
+
+for (const failure of ["disconnect", "unavailable"] as const) test(`${failure}: worker retries the current saved checkpoint`, async () => {
+  const endpoint = await provider(false, failure); const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-retry-"));
+  const api = new MemoryApi();
+  api.job.module = "bid";
+  api.job.stage = "generating";
+  api.job.outline = { skill_slug: "test-skill", summary: "Approved", target_units: 8, sections: [{ title: "Project", start_unit: 1, end_unit: 8, objective: "Approved scope" }] };
+  api.job.batches[0].status = "draft";
+  api.job.batches[0].draft_count = 1;
+  api.data.storyboard = Array.from({ length: 8 }, (_, index) => ({ unit_index: index + 1, title: `Unit ${index + 1}`, body: "content plan", evidence: ["user-brief"], missing_facts: [] }));
+  api.data.draft = Array.from({ length: 5 }, (_, index) => ({ unit_index: index + 1, title: `Unit ${index + 1}`, body: "revised draft", evidence: ["user-brief"], missing_facts: [] }));
+  try {
+    await processJob(api, await api.claimSnapshot(), { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir }, new AbortController().signal);
+    assert.equal(api.job.status, "completed", api.job.error ?? "retry did not finish");
+    assert.equal(api.job.completed_units, 8);
+    assert.equal(api.job.batches[0].draft_count, 1, "saved draft must not be regenerated");
+    assert.ok(api.steps.includes("retrying"));
+    assert.equal(api.job.model_calls, endpoint.requests.length, "each physical attempt reserves a call");
+    const prompts = endpoint.requests.flatMap(request => request.input as Array<{ role?: string; content?: Array<{ text?: string }> }>)
+      .filter(item => item.role === "user").flatMap(item => item.content ?? []).filter(item => item.text?.startsWith('{"task"')).map(item => JSON.parse(item.text!));
+    assert.equal(prompts[0].task, "review");
+    assert.equal(prompts[1].task, "review");
+  } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
+test("retries respect the persisted call budget", async () => {
+  const endpoint = await provider(false, "disconnect"); const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-retry-budget-"));
+  const api = new MemoryApi(); api.job.max_model_calls = 1;
+  try {
+    await processJob(api, await api.claimSnapshot(), { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir }, new AbortController().signal);
+    assert.equal(api.job.status, "failed");
+    assert.equal(api.job.failure_kind, "budget");
+    assert.equal(api.job.model_calls, 1);
+    assert.equal(endpoint.requests.length, 1, "the unauthorised second call must never reach the model");
+  } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
+test("authentication errors fail immediately without retry", async () => {
+  const endpoint = await provider(false, "unauthorized"); const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-no-retry-"));
+  const api = new MemoryApi();
+  try {
+    await processJob(api, await api.claimSnapshot(), { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir }, new AbortController().signal);
+    assert.equal(api.job.status, "failed");
+    assert.equal(endpoint.requests.length, 1);
+    assert.equal(api.steps.includes("retrying"), false);
+  } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
 test("worker API reads structured failure categories regardless of message language", async () => {
   const server = createServer((_request, response) => {
     response.writeHead(409, { "Content-Type": "application/json" });
@@ -303,6 +376,29 @@ test("exhausted budget blocks the request before reaching the endpoint", async (
   } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
 });
 
+test("request trace failure blocks the provider request", async () => {
+  const endpoint = await provider(); const workDir = await mkdtemp(join(tmpdir(), "archflow-trace-fail-"));
+  const api = new MemoryApi(); api.traceFailure = "request";
+  try {
+    await assert.rejects(runStep(api, await api.claimSnapshot(),
+      { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir },
+      new AbortController().signal));
+    assert.equal(endpoint.requests.length, 0);
+  } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
+test("response trace failure still records billable usage", async () => {
+  const endpoint = await provider(); const workDir = await mkdtemp(join(tmpdir(), "archflow-trace-usage-"));
+  const api = new MemoryApi(); api.traceFailure = "response";
+  try {
+    await assert.rejects(runStep(api, await api.claimSnapshot(),
+      { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir },
+      new AbortController().signal));
+    assert.equal(endpoint.requests.length, 1);
+    assert.equal(api.job.total_tokens, 120);
+  } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
 // The concept visual path is exercised above with a mock renderer and below in
 // API/document tests. This endpoint-only fixture has no LibreOffice process.
 for (const [module, target, batchSize] of [["bid", 137, 7]] as const) test(`${module}: ${target} units travel through real FastAPI, SQLite, Pi and the Responses adapter`, async () => {
@@ -350,6 +446,12 @@ for (const [module, target, batchSize] of [["bid", 137, 7]] as const) test(`${mo
     assert.equal(detail.completed_units, target);
     assert.equal(detail.model_calls, endpoint.requests.length);
     assert.equal(detail.total_tokens, endpoint.requests.length * 120);
+    const traces = await readdir(join(workDir, "projects", project.id, "workspace", "model-calls", job.id));
+    assert.equal(traces.length, endpoint.requests.length, "every physical call has a durable trace folder");
+    for (const callId of traces) {
+      const phases = await readdir(join(workDir, "projects", project.id, "workspace", "model-calls", job.id, callId));
+      assert.deepEqual(phases.sort(), ["request.json.gz", "response.json.gz"]);
+    }
     assert.equal((await api.units(job.id, "draft", target - 2, 2)).at(-1)?.unit_index, target);
     const download = await (await fetch(`${apiUrl}/api/v1/jobs/${job.id}/download`)).json() as { units: ArtifactUnit[] };
     assert.equal(download.units.length, target);

@@ -39,7 +39,19 @@ export type Message = {
   created_at: string;
 };
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "";
+
+function csrfHeader(): Record<string, string> {
+  if (typeof document === "undefined") return {};
+  const token = document.cookie.split("; ").find(item => item.startsWith("archflow_csrf="))?.split("=")[1];
+  return token ? { "X-CSRF-Token": decodeURIComponent(token) } : {};
+}
+
+function handleExpiredSession(status: number, path: string): void {
+  if (status === 401 && typeof window !== "undefined" && !path.startsWith("/api/v1/auth/") && window.location.pathname !== "/login") {
+    window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+  }
+}
 
 export type SkillFile = {
   path: string;
@@ -72,9 +84,12 @@ export async function uploadProjectFile(file: File, projectId?: string): Promise
   const response = await fetch(`${apiBaseUrl}${endpoint}`, {
     method: "POST",
     body,
+    credentials: "include",
+    headers: csrfHeader(),
   });
 
   if (!response.ok) {
+    handleExpiredSession(response.status, endpoint);
     const detail = await response.json().catch(() => null);
     throw new Error(detail?.detail ?? (response.status === 413 ? "文件超过上传限制，请拆分或压缩后重试。" : `文件上传失败（HTTP ${response.status}），请重试。`));
   }
@@ -93,8 +108,12 @@ export async function uploadCaseFile(file: File): Promise<UploadedFile> {
 }
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, init);
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...init, credentials: "include",
+    headers: { ...csrfHeader(), ...init?.headers },
+  });
   if (!response.ok) {
+    handleExpiredSession(response.status, path);
     const error = await response.json().catch(() => null);
     const detail = error?.detail;
     const message = Array.isArray(detail) ? detail.map((item: { msg?: string }) => item.msg).filter(Boolean).join("；")

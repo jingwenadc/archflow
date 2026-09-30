@@ -1,7 +1,9 @@
 import json
+import secrets
 from uuid import uuid4
 from typing import Literal
-from fastapi import FastAPI, File, HTTPException, UploadFile, Response
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, Response, Request, Query
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -31,6 +33,7 @@ from .project_repository import ProjectRepository
 from .skill_repository import SkillRepository
 from .storage import LocalFileStorage
 from .materials import DocumentRepository, material_directory
+from .auth import AuthStore, Principal, current_principal, require_admin, reset_principal, set_principal
 
 
 SKILLS = (
@@ -51,11 +54,44 @@ SKILLS = (
 )
 
 
+class Credentials(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=12, max_length=256)
+
+
+class Registration(Credentials):
+    signup_code: str = Field(min_length=1)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or load_settings()
+    if resolved.signup_code and len(resolved.signup_code) < 24:
+        raise RuntimeError("ARCHFLOW_SIGNUP_CODE must contain at least 24 characters.")
+    if resolved.signup_code and any(origin.startswith("https://") for origin in resolved.allowed_origins) and not resolved.secure_cookies:
+        raise RuntimeError("ARCHFLOW_COOKIE_SECURE must be true when HTTPS accounts are enabled.")
+    auth = AuthStore(resolved.database_path, resolved.signup_code, resolved.secure_cookies)
+
+    async def account_guard(request: Request):
+        path = request.url.path
+        principal = None
+        if resolved.signup_code and request.method != "OPTIONS" and path != "/health":
+            worker_header = request.headers.get("authorization", "")
+            worker_expected = f"Bearer {resolved.worker_token}" if resolved.worker_token else ""
+            if path.startswith("/internal/") or (worker_expected and secrets.compare_digest(worker_header, worker_expected)):
+                if not worker_expected or not secrets.compare_digest(worker_header, worker_expected):
+                    raise HTTPException(401, "Worker authentication required.")
+                principal = Principal("worker", "worker", "worker")
+            elif path not in {"/api/v1/auth/login", "/api/v1/auth/signup", "/api/v1/auth/status"}:
+                principal = auth.session(request)
+        token = set_principal(principal)
+        try:
+            yield
+        finally:
+            reset_principal(token)
+
     storage = LocalFileStorage(resolved.upload_dir, resolved.max_upload_bytes)
     case_storage = LocalFileStorage(resolved.case_upload_dir, resolved.max_upload_bytes)
-    projects = ProjectRepository(resolved.project_dir)
+    projects = ProjectRepository(resolved.project_dir, auth if resolved.signup_code else None)
     conversations = ConversationRepository(resolved.database_path)
     documents = DocumentRepository(resolved.database_path)
     run_settings = RunSettingsRepository(resolved.database_path)
@@ -65,7 +101,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         resolved.github_base_branch,
         resolved.github_token,
     )
-    app = FastAPI(title="ArchFlow API", version="0.1.0")
+    app = FastAPI(title="ArchFlow API", version="0.1.0", dependencies=[Depends(account_guard)])
     for router in job_routers(resolved, projects, conversations):
         app.include_router(router)
     app.add_middleware(
@@ -76,9 +112,75 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def no_store_private_api(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith(("/api/", "/internal/")):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/api/v1/auth/status")
+    def auth_status() -> dict:
+        return {"enabled": bool(resolved.signup_code)}
+
+    @app.post("/api/v1/auth/signup", status_code=201)
+    def signup(request: Registration, response: Response) -> dict:
+        if not resolved.signup_code:
+            raise HTTPException(503, "Individual accounts are not configured.")
+        principal = auth.create_user(request.username, request.password, request.signup_code)
+        auth.issue_session(response, principal)
+        return {"id": principal.id, "username": principal.username, "role": principal.role}
+
+    @app.post("/api/v1/auth/login")
+    def login(request: Credentials, response: Response) -> dict:
+        if not resolved.signup_code:
+            raise HTTPException(503, "Individual accounts are not configured.")
+        principal = auth.authenticate(request.username, request.password)
+        auth.issue_session(response, principal)
+        return {"id": principal.id, "username": principal.username, "role": principal.role}
+
+    @app.get("/api/v1/auth/me")
+    def me() -> dict:
+        principal = current_principal()
+        if principal is None:
+            raise HTTPException(401, "Sign in required.")
+        return {"id": principal.id, "username": principal.username, "role": principal.role}
+
+    @app.post("/api/v1/auth/logout", status_code=204)
+    def logout(request: Request, response: Response) -> Response:
+        auth.logout(request, response)
+        response.status_code = 204
+        return response
+
+    @app.get("/api/v1/admin/users")
+    def admin_users() -> list[dict]:
+        require_admin()
+        with auth.connect() as db:
+            return [dict(row) for row in db.execute("SELECT id,username,role,created_at FROM users ORDER BY created_at DESC LIMIT 500")]
+
+    @app.get("/api/v1/admin/projects/{project_id}/members")
+    def admin_project_members(project_id: str) -> list[dict]:
+        require_admin()
+        projects.get(project_id)
+        with auth.connect() as db:
+            return [dict(row) for row in db.execute(
+                "SELECT u.id,u.username,m.role,m.created_at FROM project_members m JOIN users u ON u.id=m.user_id "
+                "WHERE m.project_id=? ORDER BY m.created_at LIMIT 100", (project_id,))]
+
+    @app.get("/api/v1/admin/conversations/{conversation_id}/messages", response_model=list[MessageRecord])
+    def admin_conversation_messages(conversation_id: str, offset: int = Query(0, ge=0),
+                                    limit: int = Query(100, ge=1, le=500)) -> list[MessageRecord]:
+        require_admin()
+        with auth.connect() as db:
+            if not db.execute("SELECT 1 FROM conversations WHERE id=?", (conversation_id,)).fetchone():
+                raise HTTPException(404, "Conversation not found.")
+            rows = db.execute("SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at,id LIMIT ? OFFSET ?",
+                              (conversation_id, limit, offset))
+            return [MessageRecord(**dict(row)) for row in rows]
 
     @app.get("/api/v1/settings/run-limits", response_model=RunLimits)
     def get_run_limits() -> RunLimits:
@@ -86,6 +188,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/v1/settings/run-limits", response_model=RunLimits)
     def save_run_limits(request: RunLimits) -> RunLimits:
+        if resolved.signup_code:
+            require_admin()
         return run_settings.save(request)
 
     @app.post("/api/v1/requirements/resolve", response_model=ResolvedRequirement)
@@ -199,12 +303,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/v1/files", response_model=list[FileRecord])
     def list_files(project_id: str | None = None) -> list[FileRecord]:
+        if resolved.signup_code and not project_id:
+            raise HTTPException(422, "Select a project to list its files.")
         if project_id:
             return LocalFileStorage(projects.uploads_dir(project_id), resolved.max_upload_bytes, documents, project_id).list()
         return storage.list()
 
     @app.post("/api/v1/files", response_model=FileRecord, status_code=201)
     async def upload_file(file: UploadFile = File(...), project_id: str | None = None) -> FileRecord:
+        if resolved.signup_code and not project_id:
+            raise HTTPException(422, "Select a project to upload files.")
         if project_id:
             return await LocalFileStorage(projects.uploads_dir(project_id), resolved.max_upload_bytes, documents, project_id).save(file)
         return await storage.save(file)

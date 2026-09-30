@@ -338,7 +338,7 @@ class AgentMemory(BaseModel):
 
 
 class WorkerProgress(BaseModel):
-    step: Literal["skills", "materials", "planning", "storyboarding", "generating", "previewing", "reviewing", "compacting", "continuing"]
+    step: Literal["skills", "materials", "planning", "storyboarding", "generating", "previewing", "reviewing", "compacting", "continuing", "retrying"]
     memory: AgentMemory | None = None
 
 
