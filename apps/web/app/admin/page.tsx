@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useAuth } from "@/components/auth-gate";
 import { apiRequest, getProjects, type Conversation, type Message, type Project, type TrashedConversation } from "@/lib/api";
 
 type User = { id: string; username: string; role: string; created_at: number };
@@ -9,6 +10,7 @@ type Job = { id: string; conversation_id: string | null; status: string; stage: 
 type Call = { call_id: string; model: string; total_tokens: number | null };
 
 export default function AdminPage() {
+  const { user } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState<Project | null>(null);
@@ -31,13 +33,14 @@ export default function AdminPage() {
   currentJob.current = job?.id ?? null;
 
   useEffect(() => {
+    if (user?.role !== "admin") { setError("仅管理员可访问。"); setLoading(false); return; }
     let alive = true;
-    Promise.all([apiRequest<{ role: string }>("/api/v1/auth/me"), apiRequest<User[]>("/api/v1/admin/users"), getProjects()])
-      .then(([me, people, items]) => { if (!alive) return; if (me.role !== "admin") throw new Error("仅管理员可访问。"); setUsers(people); setProjects(items); })
+    Promise.all([apiRequest<User[]>("/api/v1/admin/users"), getProjects()])
+      .then(([people, items]) => { if (!alive) return; setUsers(people); setProjects(items); })
       .catch(cause => { if (alive) setError(cause instanceof Error ? cause.message : "读取失败"); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, []);
+  }, [user?.role]);
   useEffect(() => {
     if (!project) return;
     let alive = true;

@@ -1,15 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { apiRequest } from "@/lib/api";
 
-type User = { id: string; username: string; role: "admin" | "user" };
+import { useAuth } from "./auth-gate";
 
 export function AccountMenu() {
-  const [user, setUser] = useState<User | null>(null);
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
-  useEffect(() => { void apiRequest<User>("/api/v1/auth/me").then(setUser).catch(() => {}); }, []);
   if (!user) return <span className="avatar" aria-label="当前用户">AF</span>;
   async function logout() {
     await apiRequest("/api/v1/auth/logout", { method: "POST" });

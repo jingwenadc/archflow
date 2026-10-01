@@ -124,8 +124,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ok"}
 
     @app.get("/api/v1/auth/status")
-    def auth_status() -> dict:
-        return {"enabled": bool(resolved.signup_code)}
+    def auth_status(request: Request) -> dict:
+        enabled = bool(resolved.signup_code)
+        principal = None
+        if enabled:
+            try:
+                principal = auth.session(request, require_csrf=False)
+            except HTTPException as error:
+                if error.status_code != 401:
+                    raise
+        # Checking a session is not an authentication challenge. In particular,
+        # a normal signed-out state must not retrigger an outer Basic Auth prompt.
+        user = {"id": principal.id, "username": principal.username, "role": principal.role} if principal else None
+        return {"enabled": enabled, "user": user}
 
     @app.post("/api/v1/auth/signup", status_code=201)
     def signup(request: Registration, response: Response) -> dict:

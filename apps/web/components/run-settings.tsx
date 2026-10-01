@@ -5,6 +5,7 @@ import { apiRequest } from "@/lib/api";
 import { runLimitsSchema, type RunLimits } from "@/lib/job-contracts";
 import { normalizeIntegerInput, parseIntegerInput } from "@/lib/integer-input";
 import { CloseIcon, SettingsIcon } from "./icons";
+import { useAuth } from "./auth-gate";
 
 type SettingsState = { limits: RunLimits | null; openSettings: () => void };
 type LimitsDraft = { [Key in keyof RunLimits]: string };
@@ -17,6 +18,7 @@ export function useRunSettings() {
 }
 
 export function RunSettingsProvider({ children }: { children: ReactNode }) {
+  const { enabled, user } = useAuth();
   const [limits, setLimits] = useState<RunLimits | null>(null);
   const [draft, setDraft] = useState<LimitsDraft | null>(null);
   const [open, setOpen] = useState(false);
@@ -30,7 +32,7 @@ export function RunSettingsProvider({ children }: { children: ReactNode }) {
     try { const value = await apiRequest<RunLimits>("/api/v1/settings/run-limits"); setLimits(value); setDraft(limitsDraft(value)); setError(null); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "无法读取运行设置，请重试。"); }
   }
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { if (!enabled || user) void load(); }, [enabled, user]);
   useEffect(() => {
     if (open && !dialog.current?.open) dialog.current?.showModal();
     else if (!open && dialog.current?.open) dialog.current.close();
@@ -67,14 +69,7 @@ export function RunSettingsProvider({ children }: { children: ReactNode }) {
 
 export function RunSettingsButton() {
   const { openSettings } = useRunSettings();
-  const [allowed, setAllowed] = useState(false);
-  useEffect(() => {
-    let mounted = true;
-    Promise.all([apiRequest<{ enabled: boolean }>("/api/v1/auth/status"), apiRequest<{ role: string }>("/api/v1/auth/me").catch(() => null)])
-      .then(([status, user]) => { if (mounted) setAllowed(!status.enabled || user?.role === "admin"); })
-      .catch(() => {});
-    return () => { mounted = false; };
-  }, []);
-  if (!allowed) return null;
+  const { enabled, user } = useAuth();
+  if (enabled && user?.role !== "admin") return null;
   return <button className="icon-button settings-button" aria-label="运行设置" title="运行设置" onClick={openSettings}><SettingsIcon /></button>;
 }

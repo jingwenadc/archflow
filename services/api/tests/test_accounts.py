@@ -36,6 +36,58 @@ def signup(api: TestClient, username: str) -> None:
     api.headers.update({"X-CSRF-Token": api.cookies["archflow_csrf"]})
 
 
+def test_session_status_without_individual_accounts(tmp_path: Path) -> None:
+    api = TestClient(create_app(Settings(
+        upload_dir=tmp_path / "uploads", project_dir=tmp_path / "projects",
+        case_upload_dir=tmp_path / "cases", database_path=tmp_path / "db.sqlite3",
+        allowed_origins=("http://localhost:3000",), signup_code=None,
+    )))
+    for _ in range(2):
+        response = api.get("/api/v1/auth/status")
+        assert response.status_code == 200
+        assert response.json() == {"enabled": False, "user": None}
+        assert response.headers["Cache-Control"] == "no-store"
+        assert "www-authenticate" not in response.headers
+    assert api.get("/api/v1/auth/me").status_code == 401
+
+
+@pytest.mark.parametrize("invalid_session", ["missing", "unknown", "expired", "revoked"])
+def test_session_status_does_not_challenge_signed_out_users(tmp_path: Path, invalid_session: str) -> None:
+    api = client(tmp_path)
+    if invalid_session == "unknown":
+        api.cookies.set("archflow_session", "invalid-session-token")
+    elif invalid_session in {"expired", "revoked"}:
+        signup(api, "alice")
+        with AuthStore(tmp_path / "db.sqlite3", CODE, False).connect() as db:
+            if invalid_session == "expired":
+                db.execute("UPDATE user_sessions SET expires_at=0")
+            else:
+                db.execute("DELETE FROM user_sessions")
+    response = api.get("/api/v1/auth/status")
+    assert response.status_code == 200
+    assert response.json() == {"enabled": True, "user": None}
+    assert response.headers["Cache-Control"] == "no-store"
+    assert "www-authenticate" not in response.headers
+    assert api.get("/api/v1/projects").status_code == 401
+    assert api.get("/api/v1/auth/me").status_code == 401
+
+
+def test_session_status_reuses_cookie_without_exposing_secrets(tmp_path: Path) -> None:
+    api = client(tmp_path)
+    signup(api, "alice")
+    expected = api.get("/api/v1/auth/me").json()
+    for _ in range(2):
+        response = api.get("/api/v1/auth/status")
+        assert response.status_code == 200
+        assert response.json() == {"enabled": True, "user": expected}
+        assert set(response.json()["user"]) == {"id", "username", "role"}
+        assert response.headers["Cache-Control"] == "no-store"
+        assert "set-cookie" not in response.headers
+    restarted = client(tmp_path)
+    restarted.cookies.update(api.cookies)
+    assert restarted.get("/api/v1/auth/status").json()["user"] == expected
+
+
 def test_private_projects_and_nested_resources(tmp_path: Path) -> None:
     alice = client(tmp_path)
     bob = client(tmp_path)
