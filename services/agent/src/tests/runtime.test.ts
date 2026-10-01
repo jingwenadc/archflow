@@ -78,10 +78,12 @@ class MemoryApi extends ApiClient {
 }
 
 /** A deterministic SSE fixture exercises the REAL Pi Responses adapter and tool loop. */
-async function provider(pressure = false, failFirst?: "disconnect" | "unavailable" | "unauthorized" | "terminated") {
+async function provider(pressure = false, failFirst?: "disconnect" | "unavailable" | "unauthorized" | "terminated" | "policy", submitAfterCompaction = false, stopBeforeSubmit = false) {
   const requests: Record<string, unknown>[] = [];
   let lastPrompt: Record<string, any>;
   let inspectedLargePage = false;
+  let compacted = false;
+  let stoppedWithoutCheckpoint = false;
   const server = createServer(async (req, res) => {
     let raw = ""; for await (const chunk of req) raw += chunk;
     const payload = JSON.parse(raw); requests.push(payload);
@@ -91,9 +93,9 @@ async function provider(pressure = false, failFirst?: "disconnect" | "unavailabl
     assert.equal(req.headers.authorization, "Bearer test-only");
     if (requests.length === 1 && failFirst) {
       if (failFirst === "disconnect") { req.socket.destroy(); return; }
-      if (failFirst === "terminated") {
+      if (failFirst === "terminated" || failFirst === "policy") {
         res.writeHead(200, { "Content-Type": "text/event-stream" });
-        res.end(`event: response.failed\ndata: ${JSON.stringify({ type: "response.failed", response: { id: "failed-1", object: "response", status: "failed", output: [], error: { code: "stream_error", message: "terminated" }, usage: { input_tokens: 12, output_tokens: 0, total_tokens: 12 } } })}\n\n`);
+        res.end(`event: response.failed\ndata: ${JSON.stringify({ type: "response.failed", response: { id: "failed-1", object: "response", status: "failed", output: [], error: { code: failFirst === "policy" ? "invalid_prompt" : "stream_error", message: failFirst === "policy" ? "Invalid prompt: flagged by provider policy, key test-only" : "terminated" }, usage: { input_tokens: 12, output_tokens: 0, total_tokens: 12 } } })}\n\n`);
         return;
       }
       const status = failFirst === "unavailable" ? 503 : 401;
@@ -104,6 +106,7 @@ async function provider(pressure = false, failFirst?: "disconnect" | "unavailabl
     const input = payload.input as Array<{ type?: string; role?: string; content?: Array<{ text?: string }>; name?: string }>;
     const compacting = !payload.tools?.length;
     if (compacting) {
+      compacted = true;
       // Real SDK compaction uses the SAME Responses endpoint, without gateway-specific APIs.
       const text = `Confirmed brief: ${lastPrompt.brief.slice(0, 40)}; evidence source: user-brief. Continue ${lastPrompt.task}. Re-read test-skill before submit.`;
       const item = { type: "message", id: `msg_${requests.length}`, role: "assistant", status: "completed", content: [{ type: "output_text", text, annotations: [] }] };
@@ -129,8 +132,16 @@ async function provider(pressure = false, failFirst?: "disconnect" | "unavailabl
     }
     const hasRead = input.some(item => item.type === "function_call" && item.name === "read");
     const hasPreview = input.some(item => item.type === "function_call" && item.name === "preview_slides");
+    if (hasRead && stopBeforeSubmit && !stoppedWithoutCheckpoint) {
+      stoppedWithoutCheckpoint = true;
+      const item = { type: "message", id: `msg_${requests.length}`, role: "assistant", status: "completed", content: [{ type: "output_text", text: "The plan has been submitted.", annotations: [] }] };
+      const response = { id: `resp_${requests.length}`, object: "response", model: payload.model, status: "completed", output: [item], usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 } };
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      for (const event of [{ type: "response.created", response: { ...response, status: "in_progress", output: [] } }, { type: "response.output_item.added", output_index: 0, item: { ...item, content: [] } }, { type: "response.content_part.added", item_id: item.id, output_index: 0, content_index: 0, part: { type: "output_text", text: "", annotations: [] } }, { type: "response.output_text.delta", item_id: item.id, output_index: 0, content_index: 0, delta: "The plan has been submitted." }, { type: "response.output_item.done", output_index: 0, item }, { type: "response.completed", response }]) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      res.end(); return;
+    }
     let name = "read"; let args: unknown = { path: "/skills/test-skill/SKILL.md" };
-    if (hasRead) {
+    if (hasRead || (compacted && submitAfterCompaction)) {
       name = visualStep && !hasPreview ? "preview_slides" : "submit";
       if (prompt.task === "plan") args = { skill_slug: "test-skill", summary: "Outline ready", target_units: prompt.target_units, sections: [{ title: "Project", start_unit: 1, end_unit: prompt.target_units, objective: "Review draft" }] };
       else if (["review", "final_review"].includes(prompt.task)) {
@@ -333,6 +344,30 @@ test("authentication errors fail immediately without retry", async () => {
   } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
 });
 
+test("provider policy refusal ends the step without more model calls", async () => {
+  const endpoint = await provider(false, "policy"); const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-policy-"));
+  const api = new MemoryApi();
+  try {
+    await processJob(api, await api.claimSnapshot(), { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir }, new AbortController().signal);
+    assert.equal(api.job.status, "failed");
+    assert.equal(api.job.failure_kind, "policy");
+    assert.match(api.job.error ?? "", /Invalid prompt/);
+    assert.doesNotMatch(api.job.error ?? "", /test-only/);
+    assert.equal(endpoint.requests.length, 1);
+    assert.equal(api.steps.includes("retrying"), false);
+  } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
+test("prose claiming completion cannot replace a saved checkpoint", async () => {
+  const endpoint = await provider(false, undefined, false, true); const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-submit-repair-"));
+  const api = new MemoryApi();
+  try {
+    await processJob(api, await api.claimSnapshot(), { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir }, new AbortController().signal);
+    assert.equal(api.job.status, "waiting_outline", api.job.error ?? "checkpoint was not saved");
+    assert.equal(endpoint.requests.length, 3);
+  } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
 test("worker API reads structured failure categories regardless of message language", async () => {
   const server = createServer((_request, response) => {
     response.writeHead(409, { "Content-Type": "application/json" });
@@ -368,6 +403,22 @@ for (const module of ["concept", "bid"] as const) test(`${module}: context press
     api.job.status = "running";
     await runStep(api, await api.claimSnapshot(), config, new AbortController().signal);
     assert.match(JSON.stringify(endpoint.requests.at(-1)), /continuation_memory/);
+  } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
+test("a checkpoint remains valid when the frozen skill was read before compaction", async () => {
+  const endpoint = await provider(true, undefined, true); const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-compact-submit-"));
+  const api = new MemoryApi();
+  api.job.max_total_tokens = 100_000_000;
+  api.data.storyboard = [{ unit_index: 1, title: "Pressure fixture", body: "x".repeat(100000), evidence: ["user-brief"], missing_facts: [] }];
+  try {
+    await processJob(api, await api.claimSnapshot(), { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir }, new AbortController().signal);
+    assert.equal(api.job.status, "waiting_outline", api.job.error ?? "valid plan was discarded");
+    assert.ok(api.steps.includes("compacting"));
+    const responses = api.traces.filter(trace => trace.phase === "response");
+    const lastToolCalls = (responses.at(-1)?.data.message as { content?: Array<{ name?: string }> })?.content ?? [];
+    assert.ok(lastToolCalls.some(item => item.name === "submit"));
+    assert.ok(endpoint.requests.length < 10);
   } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
 });
 

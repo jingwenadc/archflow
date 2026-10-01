@@ -48,6 +48,8 @@ export function failureHelp(job: GenerationJobRecord) {
     return { kind: "context", message: "当前上下文未能整理完成。可以从检查点继续；若重复失败，需要检查模型窗口或减少单次输入，而不是提高累计预算。", retry: "继续整理资料" };
   if (job.failure_kind === "configuration")
     return { kind: "configuration", message: "模型配置需要管理员检查。修正配置后可以从已保存的进度继续。", retry: "配置修正后重试" };
+  if (job.failure_kind === "policy")
+    return { kind: "policy", message: "模型服务拒绝了本次请求。请展开技术诊断，并联系模型 endpoint 提供方排查；已有成果保留。", retry: "" };
   if (job.failure_kind === "provider")
     return { kind: "provider", message: "模型服务未完成请求。已有进度保留，可以重试当前步骤。", retry: "重试当前步骤" };
   return { kind: "other", message: "当前步骤未完成。可以从已保存的进度继续；若仍失败，请展开技术诊断查看原因。", retry: "继续当前步骤" };

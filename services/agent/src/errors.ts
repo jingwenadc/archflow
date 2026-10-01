@@ -6,9 +6,16 @@ export class WorkflowError extends Error {
   constructor(readonly kind: FailureKind, message: string) { super(message); }
 }
 
+export function providerFailure(message: string, contextOverflow = false): WorkflowError {
+  const kind = contextOverflow ? "context"
+    : /invalid[_ -]?prompt|content[_ -]?policy|usage policy|safety (?:violation|rejection)|flagged as potentially violating/i.test(message) ? "policy" : "provider";
+  return new WorkflowError(kind, message);
+}
+
 /** Bounded, content-free error label for downloadable diagnostics. Full provider detail is admin-only. */
 export function diagnosticError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof WorkflowError && error.kind === "policy") return "policy_rejected";
   if (/(?:^|:\s*)terminated$/i.test(message.trim())) return "stream_terminated";
   if (/timed? out|timeout|ETIMEDOUT|AbortError/i.test(message)) return "timeout";
   if (/ECONNRESET|socket hang up|connection reset/i.test(message)) return "connection_reset";

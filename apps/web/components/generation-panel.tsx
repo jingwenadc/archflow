@@ -171,7 +171,7 @@ export function GenerationPanel({ projectId, conversationId, module, messages, o
         {hasNewRequest && !generating && <p className="generation-note">已收到新需求，请确认下方新版本；本版需求与成果保留。</p>}
         {job.status === "failed" && !job.scope_mismatch && <p role="alert">{failure.message}</p>}
         {!pendingRequirement && job.status === "failed" && !job.scope_mismatch && <div className="generation-actions">
-          {!pendingRequirement && job.status === "failed" && failure.kind !== "budget" && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/retry`)}>{failure.retry}</button>}
+          {!pendingRequirement && job.status === "failed" && failure.retry && <button disabled={busy} onClick={() => void perform(`/api/v1/jobs/${job.id}/retry`)}>{failure.retry}</button>}
           {!pendingRequirement && job.status === "failed" && failure.kind === "budget" && <><button disabled={busy || !limits || Math.max(limits.max_total_tokens, job.max_total_tokens) <= job.total_tokens || Math.max(limits.max_model_calls, job.max_model_calls) <= job.model_calls} onClick={() => { if (limits) void perform(`/api/v1/jobs/${job.id}/continue`, { max_model_calls: Math.max(limits.max_model_calls, job.max_model_calls), max_total_tokens: Math.max(limits.max_total_tokens, job.max_total_tokens) }); }}>按顶部运行设置继续</button><button onClick={openSettings}>调整运行设置</button></>}
         </div>}
         <QualityReviewNotice job={job} />

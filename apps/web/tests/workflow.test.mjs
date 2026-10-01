@@ -37,6 +37,7 @@ test("progress reflects the actual stage; context failures never suggest buying 
   }
   assert.equal(failureHelp({ ...job, failure_kind: null, error: "context authentication error" }).kind, "other");
   assert.equal(failureHelp({ ...job, failure_kind: "workflow", error: "budget warning" }).kind, "other");
+  assert.equal(failureHelp({ ...job, failure_kind: "policy" }).retry, "");
   for (const module of ["concept", "bid"]) {
     assert.equal(workflowSteps(module)[2], module === "concept" ? "逐页策划" : "逐章策划");
     for (const [stage, status, index] of [["planning", "queued", 0], ["planning", "waiting_outline", 1], ["storyboarding", "running", 2], ["generating", "running", 3], ["final_review", "completed", 4]])

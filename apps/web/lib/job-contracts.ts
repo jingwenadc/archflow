@@ -87,7 +87,7 @@ export type GenerationJobDetail = {
   model: string;
   review_model: string;
   error?: string | null;
-  failure_kind?: "budget" | "context" | "configuration" | "provider" | "workflow" | null;
+  failure_kind?: "budget" | "context" | "configuration" | "provider" | "policy" | "workflow" | null;
   created_at: string;
   updated_at: string;
   storyboard_range?: Array<number> | null;
@@ -130,7 +130,7 @@ export type GenerationJobRecord = {
   model: string;
   review_model: string;
   error?: string | null;
-  failure_kind?: "budget" | "context" | "configuration" | "provider" | "workflow" | null;
+  failure_kind?: "budget" | "context" | "configuration" | "provider" | "policy" | "workflow" | null;
   created_at: string;
   updated_at: string;
 };
@@ -141,7 +141,7 @@ export type JobCheckpoint = {
   batch?: UnitBatch | null;
   review?: ReviewResult | null;
   error?: string | null;
-  failure_kind?: "budget" | "context" | "configuration" | "provider" | "workflow" | null;
+  failure_kind?: "budget" | "context" | "configuration" | "provider" | "policy" | "workflow" | null;
 };
 
 export type PlanSection = {
@@ -262,7 +262,7 @@ export type WorkerDiagnostic = {
   elapsed_ms?: number | null;
   provider_status?: number | null;
   provider_request_id?: string | null;
-  error_kind?: "budget" | "context" | "configuration" | "provider" | "workflow" | null;
+  error_kind?: "budget" | "context" | "configuration" | "provider" | "policy" | "workflow" | null;
   error_message?: string | null;
   retry_delay_ms?: number | null;
   retry_reason?: "transient_provider" | "retry_exhausted" | "step_deadline" | null;

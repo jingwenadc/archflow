@@ -314,7 +314,7 @@ class ReviewResult(BaseModel):
     issues: list[str] = Field(max_length=30)
 
 
-FailureKind = Literal["budget", "context", "configuration", "provider", "workflow"]
+FailureKind = Literal["budget", "context", "configuration", "provider", "policy", "workflow"]
 
 
 class JobCheckpoint(BaseModel):
