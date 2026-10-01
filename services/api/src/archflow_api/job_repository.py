@@ -340,6 +340,12 @@ class JobRepository:
                           sources=self.documents.catalog(detail.id), revision_units=self.documents.revisions(detail.id),
                           memory=AgentMemory.model_validate_json(memory[0]) if memory else None)
 
+    def memory(self, job_id: str, lease_id: str) -> AgentMemory | None:
+        with self.connect() as db:
+            self.leased(db, job_id, lease_id)
+            memory = db.execute("SELECT payload FROM generation_memory WHERE job_id=?", (job_id,)).fetchone()
+        return AgentMemory.model_validate_json(memory[0]) if memory else None
+
     @staticmethod
     def next_storyboard_range(db: sqlite3.Connection, row: sqlite3.Row | dict) -> list[int]:
         saved = {unit[0] for unit in db.execute("SELECT unit_index FROM generation_units WHERE job_id=? AND kind='storyboard'", (row["id"],))}

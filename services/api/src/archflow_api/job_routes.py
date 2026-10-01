@@ -13,7 +13,7 @@ from .config import Settings
 from .conversation_repository import ConversationRepository
 from .job_repository import JobRepository, snapshot_skills
 from .models import (
-    ArtifactUnit, ClaimedJob, GenerationJobCreate, GenerationJobDetail,
+    AgentMemory, ArtifactUnit, ClaimedJob, GenerationJobCreate, GenerationJobDetail,
     GenerationJobEvent, GenerationJobRecord, JobCheckpoint, UsageRecord, WorkerProgress, WorkerDiagnostic, RunLimits,
     ReviewComment, ReviewCommentCreate, ReviewSubmission, SkillSnapshot, UnitBatch,
 )
@@ -275,6 +275,10 @@ def job_routers(settings: Settings, projects: ProjectRepository,
     @internal.post("/claim", response_model=ClaimedJob | None)
     def claim() -> ClaimedJob | None:
         return jobs.claim()
+
+    @internal.get("/{job_id}/memory", response_model=AgentMemory | None)
+    def memory(job_id: str, lease_id: Annotated[str, Header()]) -> AgentMemory | None:
+        return jobs.memory(job_id, lease_id)
 
     @internal.get("/{job_id}/sources")
     def source_pages(job_id: str, query: str = "", source_id: str | None = None):

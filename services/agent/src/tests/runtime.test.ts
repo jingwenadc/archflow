@@ -24,6 +24,8 @@ class MemoryApi extends ApiClient {
   data = { storyboard: [] as ArtifactUnit[], draft: [] as ArtifactUnit[] };
   steps: string[] = [];
   memory: AgentMemory | null = null;
+  memoryReads = 0;
+  checkpointReplyLost = false;
   previewed = 0;
   previewUnits = 0;
   traces: Array<{ callId: string; phase: "request" | "response"; data: Record<string, unknown> }> = [];
@@ -31,6 +33,7 @@ class MemoryApi extends ApiClient {
   traceFailure?: "request" | "response";
   constructor() { super("http://unused", "test"); }
   override async detail() { return structuredClone(this.job); }
+  override async loadMemory() { this.memoryReads++; return this.memory; }
   override async heartbeat() {}
   override async progress(_id: string, _lease: string, body: WorkerProgress) {
     this.steps.push(body.step); if (body.memory) this.memory = body.memory;
@@ -70,6 +73,10 @@ class MemoryApi extends ApiClient {
     }
     if (checkpoint.action === "final_review") { this.job.final_review = checkpoint.review; this.job.status = checkpoint.review!.passed ? "completed" : "needs_review"; }
     if (checkpoint.action === "failure") { this.job.error = checkpoint.error; this.job.failure_kind = checkpoint.failure_kind; this.job.status = "failed"; }
+    if (this.checkpointReplyLost) {
+      this.checkpointReplyLost = false;
+      throw new WorkflowError("provider", "Connection error.");
+    }
     return this.detail();
   }
   async claimSnapshot(): Promise<ClaimedJob> { return {
@@ -78,12 +85,13 @@ class MemoryApi extends ApiClient {
 }
 
 /** A deterministic SSE fixture exercises the REAL Pi Responses adapter and tool loop. */
-async function provider(pressure = false, failFirst?: "disconnect" | "unavailable" | "unauthorized" | "terminated" | "policy", submitAfterCompaction = false, stopBeforeSubmit = false) {
+async function provider(pressure = false, failFirst?: "disconnect" | "unavailable" | "unauthorized" | "terminated" | "late_terminated" | "policy", submitAfterCompaction = false, stopBeforeSubmit = false, failAfterCompaction = false) {
   const requests: Record<string, unknown>[] = [];
   let lastPrompt: Record<string, any>;
   let inspectedLargePage = false;
   let compacted = false;
   let stoppedWithoutCheckpoint = false;
+  let failedAfterCompaction = false;
   const server = createServer(async (req, res) => {
     let raw = ""; for await (const chunk of req) raw += chunk;
     const payload = JSON.parse(raw); requests.push(payload);
@@ -91,7 +99,7 @@ async function provider(pressure = false, failFirst?: "disconnect" | "unavailabl
     assert.equal(payload.reasoning?.effort, "high");
     assert.equal(req.url, "/v1/responses");
     assert.equal(req.headers.authorization, "Bearer test-only");
-    if (requests.length === 1 && failFirst) {
+    if (requests.length === 1 && failFirst && failFirst !== "late_terminated") {
       if (failFirst === "disconnect") { req.socket.destroy(); return; }
       if (failFirst === "terminated" || failFirst === "policy") {
         res.writeHead(200, { "Content-Type": "text/event-stream" });
@@ -101,6 +109,16 @@ async function provider(pressure = false, failFirst?: "disconnect" | "unavailabl
       const status = failFirst === "unavailable" ? 503 : 401;
       res.writeHead(status, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: { message: failFirst === "unavailable" ? "Service temporarily unavailable" : "Invalid API key", type: "api_error" } }));
+      return;
+    }
+    if (failFirst === "late_terminated" && requests.length === 10) {
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.end(`event: response.failed\ndata: ${JSON.stringify({ type: "response.failed", response: { id: "failed-late", object: "response", status: "failed", output: [], error: { code: "stream_error", message: "terminated" }, usage: { input_tokens: 12, output_tokens: 0, total_tokens: 12 } } })}\n\n`);
+      return;
+    }
+    if (compacted && failAfterCompaction && !failedAfterCompaction && payload.tools?.length) {
+      failedAfterCompaction = true;
+      req.socket.destroy();
       return;
     }
     const input = payload.input as Array<{ type?: string; role?: string; content?: Array<{ text?: string }>; name?: string }>;
@@ -154,6 +172,9 @@ async function provider(pressure = false, failFirst?: "disconnect" | "unavailabl
     }
     if (prompt.human_feedback && hasRead && !input.some(item => item.type === "function_call" && item.name === "read_previous_units")) {
       name = "read_previous_units"; args = { kind: "draft", offset: 0, limit: 1 };
+    }
+    if (failFirst === "late_terminated" && requests.length < 10) {
+      name = "read"; args = { path: "/skills/test-skill/SKILL.md" };
     }
     const argumentsText = JSON.stringify(args);
     const item = { type: "function_call", id: `fc_${requests.length}`, call_id: `call_${requests.length}`, name, arguments: argumentsText, status: "completed" };
@@ -318,6 +339,54 @@ for (const failure of ["disconnect", "unavailable", "terminated"] as const) test
       .filter(item => item.role === "user").flatMap(item => item.content ?? []).filter(item => item.text?.startsWith('{"task"')).map(item => JSON.parse(item.text!));
     assert.equal(prompts[0].task, "review");
     assert.equal(prompts[1].task, "review");
+  } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
+test("a transient failure after compaction resumes from the latest durable memory", async () => {
+  const endpoint = await provider(true, undefined, false, false, true);
+  const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-memory-retry-"));
+  const api = new MemoryApi();
+  api.job.max_total_tokens = 100_000_000;
+  api.data.storyboard = [{ unit_index: 1, title: "Pressure fixture", body: "x".repeat(100000), evidence: ["user-brief"], missing_facts: [] }];
+  try {
+    const claim = await api.claimSnapshot();
+    assert.equal(claim.memory, null);
+    await processJob(api, claim, { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir }, new AbortController().signal);
+    assert.equal(api.job.status, "waiting_outline", api.job.error ?? "retry did not finish");
+    assert.ok(api.memoryReads > 0, "same-lease retry must reload saved memory");
+    assert.ok(api.memory?.summary.includes("user-brief"));
+    const prompts = endpoint.requests.flatMap(request => request.input as Array<{ role?: string; content?: Array<{ text?: string }> }>)
+      .filter(item => item.role === "user").flatMap(item => item.content ?? []).filter(item => item.text?.startsWith('{"task"')).map(item => JSON.parse(item.text!));
+    assert.equal(prompts[0].continuation_memory, undefined);
+    assert.ok(prompts.slice(1).some(prompt => prompt.continuation_memory === api.memory?.summary));
+    assert.ok(api.diagnostics.some(item => item.event === "retry"));
+  } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
+test("a committed checkpoint is not replayed when its response is lost", async () => {
+  const endpoint = await provider(); const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-checkpoint-reply-"));
+  const api = new MemoryApi(); api.checkpointReplyLost = true;
+  try {
+    await processJob(api, await api.claimSnapshot(), { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir }, new AbortController().signal);
+    assert.equal(api.job.status, "waiting_outline", api.job.error ?? "committed checkpoint was treated as failed");
+    assert.equal(api.job.model_calls, endpoint.requests.length);
+    assert.equal(api.diagnostics.filter(item => item.event === "retry").length, 0);
+  } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
+});
+
+test("an expensive failed attempt without a new recovery point is not automatically replayed", async () => {
+  const endpoint = await provider(false, "late_terminated");
+  const workDir = await mkdtemp(join(tmpdir(), "archflow-pi-cost-guard-"));
+  const api = new MemoryApi();
+  try {
+    await processJob(api, await api.claimSnapshot(), { baseUrl: endpoint.baseUrl, apiKey: "test-only", contextWindow: 32768, maxOutputTokens: 4096, workDir }, new AbortController().signal);
+    assert.equal(api.job.status, "failed");
+    assert.equal(api.job.failure_kind, "provider");
+    assert.match(api.job.error ?? "", /避免重复费用/);
+    assert.ok(api.job.total_tokens > 0);
+    assert.equal(api.job.model_calls, 10);
+    assert.equal(endpoint.requests.length, 10);
+    assert.equal(api.diagnostics.filter(item => item.event === "retry").length, 0);
   } finally { await endpoint.close(); await rm(workDir, { recursive: true, force: true }); }
 });
 

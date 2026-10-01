@@ -1,4 +1,4 @@
-import type { ClaimedJob, GenerationJobDetail, ArtifactUnit, JobCheckpoint, UsageRecord, WorkerProgress, WorkerDiagnostic, UnitBatch } from "./contracts.js";
+import type { AgentMemory, ClaimedJob, GenerationJobDetail, ArtifactUnit, JobCheckpoint, UsageRecord, WorkerProgress, WorkerDiagnostic, UnitBatch } from "./contracts.js";
 import { WorkflowError } from "./errors.js";
 
 export class ApiClient {
@@ -23,6 +23,7 @@ export class ApiClient {
 
   claim() { return this.request<ClaimedJob | null>("/internal/jobs/claim", {}); }
   detail(id: string) { return this.request<GenerationJobDetail>(`/api/v1/jobs/${id}`); }
+  loadMemory(id: string, lease: string) { return this.request<AgentMemory | null>(`/internal/jobs/${id}/memory`, undefined, lease); }
   units(id: string, kind: "draft" | "storyboard", offset: number, limit = 10) {
     return this.request<ArtifactUnit[]>(`/api/v1/jobs/${id}/units?kind=${kind}&offset=${offset}&limit=${limit}`);
   }

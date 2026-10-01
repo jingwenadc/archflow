@@ -181,6 +181,7 @@ def test_compaction_memory_is_durable_and_lease_fenced(tmp_path):
     repo.progress(job.id, claim.lease_id, WorkerProgress(step="continuing", memory=memory))
     repo.progress(job.id, claim.lease_id, WorkerProgress(step="continuing", memory=memory))
     repo.progress(job.id, claim.lease_id, WorkerProgress(step="retrying"))
+    assert repo.memory(job.id, claim.lease_id) == memory
     assert repo.detail(job.id).progress == "模型连接暂时中断，正在自动重试当前步骤"
     assert len([event for event in repo.events(job.id, 0) if event.event_type == "progress"]) == 3
     assert repo.detail(job.id).total_tokens == 0  # Progress itself cannot reset/alter billing.
@@ -190,9 +191,14 @@ def test_compaction_memory_is_durable_and_lease_fenced(tmp_path):
     assert resumed.memory == memory
     with pytest.raises(HTTPException, match="409"):
         repo.progress(job.id, claim.lease_id, WorkerProgress(step="continuing", memory=AgentMemory(scope="other", summary="stale")))
+    with pytest.raises(HTTPException, match="409"):
+        repo.memory(job.id, claim.lease_id)
+    assert repo.memory(job.id, resumed.lease_id) == memory
     repo.control(job.id, "cancel")
     with pytest.raises(HTTPException, match="409"):
         repo.progress(job.id, resumed.lease_id, WorkerProgress(step="planning"))
+    with pytest.raises(HTTPException, match="409"):
+        repo.memory(job.id, resumed.lease_id)
 
 
 def test_api_worker_auth_disable_and_download(tmp_path):
@@ -207,6 +213,10 @@ def test_api_worker_auth_disable_and_download(tmp_path):
     assert client.get(f"/api/v1/jobs/{job['id']}/download").status_code == 409
     claim = client.post("/internal/jobs/claim", json={}, headers={"Authorization": "Bearer test-worker"}).json()
     assert claim["job"]["id"] == job["id"]
+    memory_url = f"/internal/jobs/{job['id']}/memory"
+    assert client.get(memory_url).status_code == 401
+    assert client.get(memory_url, headers={"Authorization": "Bearer test-worker", "Lease-Id": "wrong"}).status_code == 409
+    assert client.get(memory_url, headers={"Authorization": "Bearer test-worker", "Lease-Id": claim["lease_id"]}).json() is None
     diagnostic = {"event": "retry", "action": "plan", "attempt": 1, "unit_start": 1, "unit_end": 2,
                   "outcome": "retrying", "call_id": "call-1", "model": "generate-model",
                   "error_kind": "provider", "error_message": "stream_terminated", "retry_delay_ms": 1000,
@@ -215,6 +225,9 @@ def test_api_worker_auth_disable_and_download(tmp_path):
     assert client.post(url, json=diagnostic).status_code == 401
     assert client.post(url, json=diagnostic, headers={"Authorization": "Bearer test-worker", "Lease-Id": "wrong"}).status_code == 409
     headers = {"Authorization": "Bearer test-worker", "Lease-Id": claim["lease_id"]}
+    saved_memory = {"scope": "plan:1-2:0", "summary": "Verified project facts and remaining work."}
+    assert client.post(f"/internal/jobs/{job['id']}/progress", json={"step": "continuing", "memory": saved_memory}, headers=headers).status_code == 204
+    assert client.get(memory_url, headers=headers).json() == saved_memory
     assert client.post(url, json=diagnostic | {"provider_payload": "private prompt"}, headers=headers).status_code == 422
     assert client.post(url, json=diagnostic, headers=headers).status_code == 204
     assert client.post(f"/api/v1/jobs/{job['id']}/cancel").status_code == 200

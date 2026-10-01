@@ -8,6 +8,11 @@ import type { ClaimedJob } from "./contracts.js";
 import { WorkflowError, diagnosticError, isRetryableProviderError } from "./errors.js";
 
 const MAX_PROVIDER_RETRIES = 4;
+const MAX_UNCHECKPOINTED_REPLAY_CALLS = 8;
+// Match the session's latest possible automatic compaction threshold. If a
+// costly attempt never produced a newer durable summary, replaying it
+// automatically can multiply model spend without recovering useful work.
+const MAX_UNCHECKPOINTED_REPLAY_TOKENS = 32_000;
 const RETRY_BASE_MS = 1_000;
 const RETRY_CAP_MS = 15_000;
 
@@ -36,7 +41,23 @@ export async function processJob(api: ApiClient, claim: ClaimedJob, config: Mode
           break;
         }
         catch (error) {
+          // The checkpoint may have committed even if the response was lost.
+          // Reconcile with durable state before deciding whether to replay a step.
+          const latest = await api.detail(claim.job.id);
+          const current = stepContext(latest);
+          const spentTokens = Math.max(0, latest.total_tokens - claim.job.total_tokens);
+          const spentCalls = Math.max(0, latest.model_calls - claim.job.model_calls);
+          if (latest.status !== "running" || latest.stage !== claim.job.stage ||
+              current.action !== action || current.start !== start || current.end !== end ||
+              current.batch?.draft_count !== stepContext(claim.job).batch?.draft_count) {
+            claim.job = latest;
+            break;
+          }
+          claim.job = latest;
           const retryable = isRetryableProviderError(error) && retries < MAX_PROVIDER_RETRIES && !stepSignal.aborted;
+          const memory = retryable ? await api.loadMemory(claim.job.id, claim.lease_id) : null;
+          const memoryScope = `${action}:${start}-${end}:${current.batch?.draft_count ?? 0}`;
+          const freshMemory = memory?.scope === memoryScope && memory.summary !== claim.memory?.summary;
           const backoff = Math.min(RETRY_CAP_MS, RETRY_BASE_MS * 2 ** retries);
           const retryDelay = retryable ? Math.round(backoff * (0.75 + Math.random() * 0.5)) : undefined;
           await api.diagnostic(claim.job.id, claim.lease_id, { ...base, event: "step_end", outcome: "failed",
@@ -45,13 +66,17 @@ export async function processJob(api: ApiClient, claim: ClaimedJob, config: Mode
             retry_reason: stepSignal.aborted && !signal.aborted ? "step_deadline" : isRetryableProviderError(error) && retries >= MAX_PROVIDER_RETRIES ? "retry_exhausted" : undefined,
           }).catch(() => undefined);
           if (!retryable) throw error;
-          // Each attempt creates a fresh Pi session and reserves a fresh model call.
-          // Persisted batches remain authoritative; no earlier checkpoint is replayed.
+          if ((spentTokens > MAX_UNCHECKPOINTED_REPLAY_TOKENS || spentCalls > MAX_UNCHECKPOINTED_REPLAY_CALLS) && !freshMemory) {
+            throw new WorkflowError("provider", "模型连接中断，本次尝试消耗较多调用或 tokens，但未保存新的恢复摘要；已暂停自动重跑，避免重复费用。可从已有检查点手动继续。");
+          }
+          // Each attempt creates a fresh Pi session. Refresh the same-lease
+          // compaction memory rather than restarting from the original claim.
           await api.diagnostic(claim.job.id, claim.lease_id, { ...base, event: "retry", outcome: "retrying",
             error_kind: "provider", error_message: diagnosticError(error), retry_delay_ms: retryDelay, retry_reason: "transient_provider",
           }).catch(() => undefined);
           await api.progress(claim.job.id, claim.lease_id, { step: "retrying" }).catch(() => undefined);
           await delay(retryDelay, undefined, { signal: stepSignal });
+          claim.memory = memory;
         }
       }
       claim.job = await api.detail(claim.job.id);
