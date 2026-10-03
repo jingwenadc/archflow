@@ -15,6 +15,12 @@ class Settings:
     github_repository: str = "jingwenadc/archflow"
     github_base_branch: str = "main"
     github_token: str | None = None
+    llm_model: str = "gpt-6-astra"
+    review_model: str = "gpt-6-astra"
+    agent_enabled: bool = False
+    worker_token: str | None = None
+    signup_code: str | None = None
+    secure_cookies: bool = False
 
 
 def load_settings() -> Settings:
@@ -35,4 +41,10 @@ def load_settings() -> Settings:
         github_repository=getenv("ARCHFLOW_GITHUB_REPOSITORY", "jingwenadc/archflow"),
         github_base_branch=getenv("ARCHFLOW_GITHUB_BASE_BRANCH", "main"),
         github_token=getenv("ARCHFLOW_GITHUB_TOKEN") or None,
+        llm_model=getenv("ARCHFLOW_LLM_MODEL", "gpt-6-astra"),
+        review_model=getenv("ARCHFLOW_REVIEW_MODEL", "gpt-6-astra"),
+        agent_enabled=getenv("ARCHFLOW_AGENT_ENABLED", "false").lower() == "true",
+        worker_token=getenv("ARCHFLOW_WORKER_TOKEN") or None,
+        signup_code=getenv("ARCHFLOW_SIGNUP_CODE") or None,
+        secure_cookies=getenv("ARCHFLOW_COOKIE_SECURE", "false").lower() == "true",
     )

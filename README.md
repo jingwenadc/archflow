@@ -2,13 +2,17 @@
 
 面向建筑设计团队的方案设计、投标文件与施工图协同工作台。
 
-当前分支是可供团队评审的基础版本：前后端结构已经建立，项目资料与文字对话可持久保存。AI 回复、内容生成与技能调用仍保持禁用，工作流引擎仍为 TBD。
+当前版本提供可选的 Pi 文档工作流：项目级资料解析、聊天接收需求、中间确认卡、两阶段批准、分批生成与审校、可编辑 PPTX/DOCX 和 PDF 导出、逐页预览及指定范围修订。方案 PPT 的新批次由模型编排可编辑文本/图片/形状/表格，先渲染真实页面供模型逐页检查，不再限定四种固定版式；未完成全部目标页数不会导出为完整文件。模型默认禁用，需管理员配置 endpoint / 密钥；聊天中的即时接收提示是流程提示，不是开放式 AI 问答。成果仍需专业复核，不冒充正式施工图或最终技术标。架构、UX、边界与验收统一见 [PRODUCT_DESIGN.md](PRODUCT_DESIGN.md)。
+
+个人账号、默认私有项目、管理员跨项目排查及完整模型调用记录的启用/迁移说明见 [PRODUCT_DESIGN.md 的账号与记录章节](PRODUCT_DESIGN.md#个人账号项目权限与完整模型调用记录)。当前没有项目邀请功能；不要共用个人账号。账号注册初始码为空时仍维持原单用户模式。
 
 ## 代码结构
 
 ```text
 apps/web/       Next.js + React + TypeScript
 services/api/   FastAPI 与本地文件存储适配器
+services/agent/ Pi SDK Worker（Responses、受限工具、检查点恢复）
+services/documents/ 独立 CPU Worker（Office/PDF 解析、OCR、原生文档排版与渲染）
 skills/         已有建筑专业技能
 dist/           旧版静态原型，暂时保留
 PRODUCT_DESIGN.md
@@ -30,7 +34,7 @@ python skills/aec-technical-bid-authoring/scripts/validate_bid_plan.py plan.json
 
 ## 本地评审
 
-需要 Node.js 22、pnpm 11 和 Python 3.12+。
+需要 Node.js 22.19+、pnpm 11 和 Python 3.12+。
 
 ### Web
 
@@ -52,6 +56,21 @@ uvicorn archflow_api.main:app --reload
 ```
 
 API 位于 `http://localhost:8000`，交互文档位于 `http://localhost:8000/docs`。
+
+### 可选 Pi Worker 与测试
+
+使用 `.env.example` / `.env.production.example` 中的 `ARCHFLOW_AGENT_*`、`ARCHFLOW_WORKER_TOKEN` 和模型变量；生产 Compose 会自动启动一个独立 Worker。未配置时不调用模型。
+
+```bash
+pnpm --filter @archflow/agent build
+# 本地：在终端设置同一组服务端环境变量后运行
+pnpm --filter @archflow/agent start
+# 需先按上文创建 services/api/.venv 并安装 API
+pnpm --filter @archflow/agent test
+services/api/.venv/bin/pytest services/api/tests -q
+```
+
+Pi 测试使用 localhost 模拟 Responses 供应商，不需要真实 API key；包括 100 单元的完整持久化任务。Python 模型变更后运行 `services/api/.venv/bin/python services/api/scripts/generate_job_contracts.py`，同步生成前端类型与工具 schema。更多配置、安全限制与架构图见主设计文档。
 
 当前 API 提供：
 
@@ -77,8 +96,8 @@ API 位于 `http://localhost:8000`，交互文档位于 `http://localhost:8000/d
 
 - 支持界面：图片、PDF、Word、Excel、PowerPoint 上传。
 - 暂不支持：CAD/DWG、DXF、SketchUp、PKPM。
-- 已启用：项目级文件列表、模块内多对话和用户文字消息的本地持久化。
-- 暂不启用：AI 回复、内容生成、技能执行和认证。
+- 已启用：项目资料解析、模块内多对话、流程接收提示、可配置的分批生成/审校、可编辑文档和指定页修订；部署有共享密码保护。
+- 暂不支持：自由问答式 AI 聊天、工程计算、自动效果图/动画生成、模板像素级复刻、公开多租户认证与权限。
 - 工作流引擎候选：DBOS、Hatchet、Temporal；根据真实任务量和运维成本再决定。
 
 完整产品、UX 和架构决定见 [PRODUCT_DESIGN.md](PRODUCT_DESIGN.md)。开发协作约定见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [AGENTS.md](AGENTS.md)。

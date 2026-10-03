@@ -1,2 +1,10 @@
 packages:
   - apps/*
+  - services/agent
+
+# pnpm 11 requires an explicit decision for every dependency build script.
+# esbuild verifies its platform binary; the other scripts are unnecessary here.
+allowBuilds:
+  esbuild: true
+  '@google/genai': false
+  protobufjs: false

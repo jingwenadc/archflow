@@ -1,6 +1,8 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from .requirements import scope_mismatch
 
 
 class CapabilitySet(BaseModel):
@@ -8,7 +10,7 @@ class CapabilitySet(BaseModel):
     file_upload: bool
     chat: bool
     generation: bool
-    workflow_engine: Literal["tbd"]
+    workflow_engine: Literal["sqlite-worker"]
 
 
 class FileRecord(BaseModel):
@@ -17,6 +19,10 @@ class FileRecord(BaseModel):
     size: int
     content_type: str
     status: Literal["uploaded"]
+    processing_status: Literal["queued", "processing", "ready", "failed"] = "queued"
+    processing_error: str | None = None
+    page_count: int = 0
+    role: Literal["source", "reference", "image", "excluded"] = "source"
 
 
 class ProjectCreate(BaseModel):
@@ -61,8 +67,14 @@ class ConversationRecord(BaseModel):
     updated_at: str
 
 
+class TrashedConversation(ConversationRecord):
+    deleted_at: str
+    generation_count: int
+
+
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=20_000)
+    client_id: str | None = Field(default=None, max_length=100)
 
     @field_validator("content")
     @classmethod
@@ -116,3 +128,307 @@ class DraftPullRequestResult(BaseModel):
     url: str
     number: int
     branch: str
+
+
+JobModule = Literal["concept", "bid", "drawing"]
+JobStatus = Literal["queued", "running", "waiting_outline", "waiting_storyboard", "waiting_review", "needs_review", "completed", "failed", "cancelled"]
+JobStage = Literal["planning", "storyboarding", "generating", "final_review"]
+
+CallLimit = Annotated[int, Field(strict=True, ge=1, le=100_000)]
+TokenLimit = Annotated[int, Field(strict=True, ge=1000, le=1_000_000_000)]
+
+
+class RunLimits(BaseModel):
+    max_model_calls: CallLimit
+    max_total_tokens: TokenLimit
+
+
+DEFAULT_RUN_LIMITS = RunLimits(max_model_calls=20_000, max_total_tokens=100_000_000)
+
+
+class RequirementDraft(BaseModel):
+    module: JobModule
+    goal: str = Field(max_length=20_000)
+    base_goal: str = Field(default="", max_length=20_000)
+    fallback_units: int = Field(default=10, ge=1, le=500)
+
+
+class ResolvedRequirement(BaseModel):
+    target_units: int
+    requested_units: int | None
+    count_override: bool
+
+
+class GenerationJobCreate(BaseModel):
+    project_id: str = Field(min_length=1, max_length=100)
+    conversation_id: str | None = Field(default=None, max_length=100)
+    module: JobModule
+    goal: str = Field(min_length=1, max_length=20_000)
+    target_units: int = Field(ge=1, le=500)
+    batch_size: int = Field(default=5, ge=1, le=10)
+    max_revision_rounds: int = Field(default=2, ge=0, le=3)
+    count_override: bool = False
+    max_model_calls: CallLimit | None = None
+    max_total_tokens: TokenLimit | None = None
+
+    @model_validator(mode="after")
+    def validate_scope(self):
+        if scope_mismatch(self.goal, self.module, self.target_units, self.count_override):
+            raise ValueError("文字要求与交付数量不一致，请重新确认数量，或明确使用手动设置的数量。")
+        return self
+
+    @field_validator("goal")
+    @classmethod
+    def normalize_goal(cls, value: str) -> str:
+        content = value.strip()
+        if not content:
+            raise ValueError("Generation goal cannot be blank")
+        return content
+
+
+class PlanSection(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    start_unit: int = Field(ge=1, le=500, description="Inclusive actual slide/chapter index, not the outline section number.")
+    end_unit: int = Field(ge=1, le=500, description="Inclusive actual slide/chapter index; a section may span many units.")
+    objective: str = Field(min_length=1, max_length=2000)
+
+
+class DocumentPlan(BaseModel):
+    skill_slug: str = Field(min_length=1, max_length=100)
+    summary: str = Field(min_length=1, max_length=4000, description="Project and design strategy summary. Scope is declared separately in target_units; do not propose a different length or narrate workflow/approval instructions.")
+    sections: list[PlanSection] = Field(min_length=1, max_length=30)
+    target_units: int = Field(ge=1, le=500, description="Must equal the user's confirmed deliverable length, not len(sections).")
+
+
+class SlideElement(BaseModel):
+    """Editable PowerPoint object on a 13.333 × 7.5 inch canvas."""
+
+    kind: Literal["text", "image", "rect", "ellipse", "line", "table"]
+    x: float = Field(ge=0, le=13.333)
+    y: float = Field(ge=0, le=7.5)
+    w: float = Field(ge=0, le=13.333)
+    h: float = Field(ge=0, le=7.5)
+    text: str | None = Field(default=None, max_length=1200)
+    image_id: str | None = None
+    rows: list[list[str]] = Field(default_factory=list, max_length=10)
+    fill: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{6}$")
+    stroke: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{6}$")
+    header_fill: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{6}$")
+    header_color: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{6}$")
+    alternate_fill: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{6}$")
+    color: str = Field(default="152D38", pattern=r"^[0-9A-Fa-f]{6}$")
+    font_size: int = Field(default=20, ge=12, le=72)
+    bold: bool = False
+    align: Literal["left", "center", "right"] = "left"
+    valign: Literal["top", "mid", "bottom"] = "top"
+    fit: Literal["contain", "cover"] = "contain"
+
+    @model_validator(mode="after")
+    def validate_element(self):
+        if self.x + self.w > 13.334 or self.y + self.h > 7.501:
+            raise ValueError("Slide element extends beyond the 16:9 canvas.")
+        if self.kind == "line":
+            if self.w == self.h == 0:
+                raise ValueError("A line needs a nonzero length.")
+        elif self.w < 0.05 or self.h < 0.05:
+            raise ValueError("Slide elements need a visible width and height.")
+        if self.kind == "text" and not (self.text or "").strip():
+            raise ValueError("Text elements need content.")
+        if self.kind == "image" and not self.image_id:
+            raise ValueError("Image elements need a frozen source asset ID.")
+        if self.kind == "table" and (not self.rows or any(not row or len(row) > 6 for row in self.rows)):
+            raise ValueError("Tables need 1–10 rows and at most 6 columns.")
+        return self
+
+
+class SlideDesign(BaseModel):
+    background: str = Field(default="FFFFFF", pattern=r"^[0-9A-Fa-f]{6}$")
+    elements: list[SlideElement] = Field(min_length=1, max_length=30)
+
+
+class ArtifactUnit(BaseModel):
+    unit_index: int = Field(ge=1, le=500)
+    title: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=12000)
+    evidence: list[str] = Field(max_length=30)
+    missing_facts: list[str] = Field(max_length=30)
+    slide_copy: list[Annotated[str, Field(min_length=1, max_length=220)]] = Field(default_factory=list, max_length=8,
+        description="Storyboard only: proposed audience-facing text below the title, in display order.")
+    visual_plan: str = Field(default="", max_length=1200,
+        description="Storyboard only: the chart, diagram or source image to show and what it proves.")
+    layout: Literal["cover", "text", "image", "table"] = "text"
+    image_id: str | None = None
+    table: list[list[str]] = Field(default_factory=list, max_length=15)
+    slide: SlideDesign | None = None
+
+
+ArtifactKind = Literal["outline", "storyboard", "draft"]
+
+
+class CommentAnchor(BaseModel):
+    unit_index: int = Field(ge=0, le=500, description="Outline: 0 is summary, 1-based section index otherwise. Storyboard/draft: actual unit index.")
+    quote: str = Field(min_length=1, max_length=4000)
+
+
+class ReviewCommentCreate(BaseModel):
+    kind: ArtifactKind
+    body: str = Field(min_length=1, max_length=4000)
+    anchor: CommentAnchor | None = None
+
+    @field_validator("body")
+    @classmethod
+    def nonblank_body(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("反馈不能为空。")
+        return value.strip()
+
+
+class ReviewComment(ReviewCommentCreate):
+    id: str
+    job_id: str
+    snapshot_hash: str | None = None
+    created_at: str
+    submitted_job_id: str | None = None
+
+
+class ReviewSubmission(BaseModel):
+    kind: ArtifactKind
+    overall: str = Field(default="", max_length=4000)
+    comment_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+class ReviewSnapshot(BaseModel):
+    parent_id: str
+    kind: ArtifactKind
+    comments: list[ReviewComment]
+    original_outline: DocumentPlan | None = None
+
+
+class UnitBatch(BaseModel):
+    units: list[ArtifactUnit] = Field(min_length=1, max_length=10)
+
+
+class ReviewResult(BaseModel):
+    passed: bool
+    summary: str = Field(min_length=1, max_length=4000)
+    issues: list[str] = Field(max_length=30)
+
+
+FailureKind = Literal["budget", "context", "configuration", "provider", "policy", "workflow"]
+
+
+class JobCheckpoint(BaseModel):
+    action: Literal["plan", "storyboard", "draft", "review", "final_review", "failure"]
+    plan: DocumentPlan | None = None
+    batch: UnitBatch | None = None
+    review: ReviewResult | None = None
+    error: str | None = Field(default=None, max_length=2000)
+    failure_kind: FailureKind | None = None
+
+
+class UsageRecord(BaseModel):
+    call_id: str = Field(min_length=1, max_length=200)
+    model: str = Field(min_length=1, max_length=200)
+    total_tokens: int = Field(ge=0)
+
+
+class AgentMemory(BaseModel):
+    scope: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=40000)
+
+
+class WorkerProgress(BaseModel):
+    step: Literal["skills", "materials", "planning", "storyboarding", "generating", "previewing", "reviewing", "compacting", "continuing", "retrying"]
+    memory: AgentMemory | None = None
+
+
+class WorkerDiagnostic(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event: Literal["step_start", "step_end", "model_call", "retry"]
+    action: Literal["plan", "storyboard", "draft", "review", "final_review"]
+    attempt: int = Field(ge=1, le=100)
+    unit_start: int = Field(ge=1)
+    unit_end: int = Field(ge=1)
+    outcome: Literal["started", "completed", "failed", "retrying"]
+    call_id: str | None = Field(default=None, max_length=200)
+    model: str | None = Field(default=None, max_length=200)
+    elapsed_ms: int | None = Field(default=None, ge=0)
+    provider_status: int | None = Field(default=None, ge=100, le=599)
+    provider_request_id: str | None = Field(default=None, max_length=200)
+    error_kind: FailureKind | None = None
+    error_message: str | None = Field(default=None, max_length=500)
+    retry_delay_ms: int | None = Field(default=None, ge=0)
+    retry_reason: Literal["transient_provider", "retry_exhausted", "step_deadline"] | None = None
+
+
+class GenerationBatchRecord(BaseModel):
+    batch_index: int
+    start_unit: int
+    end_unit: int
+    status: Literal["pending", "draft", "completed"]
+    draft_count: int
+    review: ReviewResult | None = None
+
+
+class GenerationJobRecord(BaseModel):
+    id: str
+    project_id: str
+    conversation_id: str | None
+    module: JobModule
+    goal: str
+    target_units: int
+    count_override: bool = False
+    scope_mismatch: bool = False
+    parent_id: str | None = None
+    feedback_kind: ArtifactKind | None = None
+    batch_size: int
+    max_revision_rounds: int
+    status: JobStatus
+    stage: JobStage
+    completed_units: int
+    storyboard_units: int
+    model_calls: int
+    total_tokens: int
+    max_model_calls: int
+    max_total_tokens: int
+    model: str
+    review_model: str
+    error: str | None = None
+    failure_kind: FailureKind | None = None
+    created_at: str
+    updated_at: str
+
+
+class GenerationJobDetail(GenerationJobRecord):
+    storyboard_range: list[int] | None = None
+    outline: DocumentPlan | None = None
+    batches: list[GenerationBatchRecord]
+    final_review: ReviewResult | None = None
+    progress: str | None = None
+    review_request: ReviewSnapshot | None = None
+
+
+class GenerationJobEvent(BaseModel):
+    id: int
+    job_id: str
+    event_type: str
+    message: str
+    created_at: str
+
+
+class SkillSnapshot(BaseModel):
+    slug: str
+    description: str
+    sha256: str
+    files: dict[str, str]
+    images: dict[str, str] = Field(default_factory=dict, description="Frozen image atlases; stored by content hash after job creation.")
+
+
+class ClaimedJob(BaseModel):
+    job: GenerationJobDetail
+    lease_id: str
+    skills: list[SkillSnapshot]
+    current_units: list[ArtifactUnit]
+    sources: list[dict] = Field(default_factory=list)
+    revision_units: list[int] = Field(default_factory=list)
+    memory: AgentMemory | None = None

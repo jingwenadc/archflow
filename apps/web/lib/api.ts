@@ -4,6 +4,10 @@ export type UploadedFile = {
   size: number;
   content_type: string;
   status: "uploaded";
+  processing_status: "queued" | "processing" | "ready" | "failed";
+  processing_error: string | null;
+  page_count: number;
+  role: "source" | "reference" | "image" | "excluded";
 };
 
 export type Project = {
@@ -22,6 +26,11 @@ export type Conversation = {
   updated_at: string;
 };
 
+export type TrashedConversation = Conversation & {
+  deleted_at: string;
+  generation_count: number;
+};
+
 export type Message = {
   id: string;
   conversation_id: string;
@@ -30,7 +39,19 @@ export type Message = {
   created_at: string;
 };
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "";
+
+function csrfHeader(): Record<string, string> {
+  if (typeof document === "undefined") return {};
+  const token = document.cookie.split("; ").find(item => item.startsWith("archflow_csrf="))?.split("=")[1];
+  return token ? { "X-CSRF-Token": decodeURIComponent(token) } : {};
+}
+
+function handleExpiredSession(status: number, path: string): void {
+  if (status === 401 && typeof window !== "undefined" && !path.startsWith("/api/v1/auth/") && window.location.pathname !== "/login") {
+    window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+  }
+}
 
 export type SkillFile = {
   path: string;
@@ -63,11 +84,14 @@ export async function uploadProjectFile(file: File, projectId?: string): Promise
   const response = await fetch(`${apiBaseUrl}${endpoint}`, {
     method: "POST",
     body,
+    credentials: "include",
+    headers: csrfHeader(),
   });
 
   if (!response.ok) {
+    handleExpiredSession(response.status, endpoint);
     const detail = await response.json().catch(() => null);
-    throw new Error(detail?.detail ?? "文件上传失败");
+    throw new Error(detail?.detail ?? (response.status === 413 ? "文件超过上传限制，请拆分或压缩后重试。" : `文件上传失败（HTTP ${response.status}），请重试。`));
   }
 
   return response.json() as Promise<UploadedFile>;
@@ -83,13 +107,24 @@ export async function uploadCaseFile(file: File): Promise<UploadedFile> {
   return apiRequest<UploadedFile>("/api/v1/cases/files", { method: "POST", body });
 }
 
-async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, init);
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...init, credentials: "include",
+    headers: { ...csrfHeader(), ...init?.headers },
+  });
   if (!response.ok) {
+    handleExpiredSession(response.status, path);
     const error = await response.json().catch(() => null);
-    throw new Error(error?.detail ?? "请求失败，请稍后重试。");
+    const detail = error?.detail;
+    const message = Array.isArray(detail) ? detail.map((item: { msg?: string }) => item.msg).filter(Boolean).join("；")
+      : typeof detail === "object" && detail ? detail.message : detail;
+    throw new Error(message || "请求失败，请稍后重试。");
   }
-  return response.json() as Promise<T>;
+  return response.status === 204 ? undefined as T : response.json() as Promise<T>;
+}
+
+export function jobDownloadUrl(id: string) {
+  return `${apiBaseUrl}/api/v1/jobs/${encodeURIComponent(id)}/download`;
 }
 
 export function getProjects() {
@@ -116,15 +151,27 @@ export function createConversation(projectId: string, module: Conversation["modu
   });
 }
 
+export function deleteConversation(conversationId: string, projectId: string) {
+  return apiRequest<void>(`/api/v1/conversations/${encodeURIComponent(conversationId)}?project_id=${encodeURIComponent(projectId)}`, { method: "DELETE" });
+}
+
+export function getProjectTrash(projectId: string) {
+  return apiRequest<TrashedConversation[]>(`/api/v1/projects/${encodeURIComponent(projectId)}/trash`);
+}
+
+export function restoreConversation(conversationId: string, projectId: string) {
+  return apiRequest<Conversation>(`/api/v1/projects/${encodeURIComponent(projectId)}/trash/conversations/${encodeURIComponent(conversationId)}/restore`, { method: "POST" });
+}
+
 export function getMessages(conversationId: string) {
   return apiRequest<Message[]>(`/api/v1/conversations/${encodeURIComponent(conversationId)}/messages`);
 }
 
-export function sendMessage(conversationId: string, content: string) {
+export function sendMessage(conversationId: string, content: string, clientId?: string) {
   return apiRequest<Message>(`/api/v1/conversations/${encodeURIComponent(conversationId)}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, client_id: clientId }),
   });
 }
 

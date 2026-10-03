@@ -1,5 +1,7 @@
 # 制作工作流
 
+ArchFlow 网站运行时，以服务器的已批准提纲、完整策划、授权批次、检查点和版本记录为准；网站的批次预览与审校工具替代本地 `project-state.json`/脚本/目录步骤。以下文件命令和章节路径只适用于独立文件制作。两种模式都不得跳过提纲和完整策划的明确批准。
+
 本流程受 [人工审批门禁](approval-gates.md) 约束。整体骨架未批准时不得编写逐页故事板；完整逐页故事板未批准时不得生成任何幻灯片。故事板批准后采用范围授权，可跳转或并行处理不同章节。
 
 ## 1. 资料清点与证据映射
@@ -46,7 +48,7 @@
 
 ## 5. 提交完整逐页故事板并停止
 
-每个故事板条目必须包含 id、chapter、title、purpose、takeaway、archetype、evidence 和 assets。可选字段包括 status、notes 和 reuse_reason。使用检查器：
+每个故事板条目必须包含 id、chapter、title、purpose、takeaway、slide_copy（拟展示给观众的短文案）、visual_plan（具体图表/画面及其作用）、archetype、evidence 和 assets。可选字段包括 status、notes 和 reuse_reason。策划文案可在正式排版时校订，不得把 purpose 或 visual_plan 当作最终页面正文。使用检查器：
 
     python scripts/check_storyboard.py storyboard.json
 

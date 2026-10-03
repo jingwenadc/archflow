@@ -10,7 +10,7 @@ from collections import Counter
 from pathlib import Path
 
 
-REQUIRED = {"id", "chapter", "title", "purpose", "takeaway", "archetype", "evidence", "assets"}
+REQUIRED = {"id", "chapter", "title", "purpose", "takeaway", "slide_copy", "visual_plan", "archetype", "evidence", "assets"}
 ALLOWED_ARCHETYPES = {
     "minimal-cover", "contents-matrix", "chapter-divider", "narrative-hinge",
     "context-map-split", "brief-program-map", "concept-equation",
@@ -63,6 +63,11 @@ def main() -> int:
         for field in ("chapter", "title", "purpose", "takeaway"):
             if field in slide and not has_text(slide[field]):
                 errors.append(f"{label}：{field} 必须是非空文字")
+        copy = slide.get("slide_copy")
+        if not isinstance(copy, list) or not copy or len(copy) > 8 or any(not has_text(line) for line in copy):
+            errors.append(f"{label}：slide_copy 必须包含 1–8 条拟展示的非空短文案")
+        if not has_text(slide.get("visual_plan")):
+            errors.append(f"{label}：visual_plan 必须说明具体图表或画面及其作用")
         archetype = slide.get("archetype")
         if archetype not in ALLOWED_ARCHETYPES:
             errors.append(f"{label}：不支持的页面原型 {archetype!r}")

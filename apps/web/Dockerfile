@@ -7,7 +7,8 @@ RUN corepack enable && corepack prepare pnpm@11.19.0 --activate
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/package.json
-RUN pnpm install --frozen-lockfile
+COPY services/agent/package.json services/agent/package.json
+RUN pnpm --filter @archflow/web install --frozen-lockfile
 
 FROM dependencies AS builder
 
