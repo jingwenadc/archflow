@@ -1,7 +1,11 @@
 .DS_Store
 .env
 .env.*
+# Real environment files contain secrets. Copy the matching committed example.
+.env.agent-preview
+.env.production
 !.env.example
+!.env.agent-preview.example
 !.env.production.example
 node_modules/
 .next/
@@ -16,5 +20,4 @@ __pycache__/
 *.tsbuildinfo
 *.zip
 deploy/nginx/.htpasswd
-.env.production
 services/agent/dist/
